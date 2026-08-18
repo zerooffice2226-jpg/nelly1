@@ -17,9 +17,8 @@ async function getOrdersWithAllocation() {
     }
   });
 
-  const warehouseIn = await prisma.warehouseReceipt.groupBy({
-    by: ['modelNo'],
-    _sum: { most: true },
+  const warehouseReceipts = await prisma.warehouseReceipt.findMany({
+    select: { modelNo: true, color: true, most: true },
   });
 
   const fulfilledItems = await prisma.orderItem.findMany({
@@ -29,23 +28,29 @@ async function getOrdersWithAllocation() {
 
   const availableStockByColor: { [model: string]: { [color: string]: number } } = {};
 
-  warehouseIn.forEach((item) => {
+  warehouseReceipts.forEach((item) => {
     const model = item.modelNo;
     if (!model) return;
 
-    const totalPieces = item._sum.most || 0;
-    const colorCount = modelColorCount[model] || 1;
-    const piecesPerColor = Math.floor(totalPieces / colorCount);
+    const totalPieces = item.most || 0;
+    const receiptColor = item.color;
 
     if (!availableStockByColor[model]) {
       availableStockByColor[model] = {};
     }
 
-    productsList
-      .filter((p) => p.modelNo === model && p.color)
-      .forEach((p) => {
-        if (p.color) availableStockByColor[model][p.color] = piecesPerColor;
-      });
+    if (receiptColor) {
+      availableStockByColor[model][receiptColor] = (availableStockByColor[model][receiptColor] || 0) + totalPieces;
+    } else {
+      const colorCount = modelColorCount[model] || 1;
+      const piecesPerColor = Math.floor(totalPieces / colorCount);
+
+      productsList
+        .filter((p) => p.modelNo === model && p.color)
+        .forEach((p) => {
+          if (p.color) availableStockByColor[model][p.color] = (availableStockByColor[model][p.color] || 0) + piecesPerColor;
+        });
+    }
   });
 
   fulfilledItems.forEach((item) => {

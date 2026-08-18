@@ -174,6 +174,140 @@ export async function getSafeLedger(safeId: string, startDate?: string, endDate?
   }
 }
 
+export async function getWarehouseReport(startDate?: string, endDate?: string) {
+  try {
+    const dateFilter: any = {};
+    if (startDate) dateFilter.gte = new Date(startDate);
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59);
+      dateFilter.lte = end;
+    }
+
+    const where = startDate || endDate ? { date: dateFilter } : {};
+
+    const receipts = await prisma.warehouseReceipt.findMany({
+      where,
+      orderBy: { date: 'desc' },
+      include: { warehouseSyncRecord: true }
+    });
+
+    const detail = receipts.map(r => ({
+      uniqueid: r.uniqueid,
+      date: r.date,
+      empName: r.empName || 'غير محدد',
+      modelNo: r.modelNo,
+      most: r.most,
+      color: r.color || '-',
+      synced: !!r.warehouseSyncRecord
+    }));
+
+    const totalQuantity = receipts.reduce((acc, r) => acc + (r.most || 0), 0);
+
+    const byModelMap: any = {};
+    const byEmployeeMap: any = {};
+    receipts.forEach(r => {
+      const m = r.modelNo || '-';
+      if (!byModelMap[m]) byModelMap[m] = { modelNo: m, receipts: 0, quantity: 0, lastDate: null };
+      byModelMap[m].receipts += 1;
+      byModelMap[m].quantity += (r.most || 0);
+      if (!byModelMap[m].lastDate || r.date > byModelMap[m].lastDate) byModelMap[m].lastDate = r.date;
+
+      const e = r.empName || 'غير محدد';
+      if (!byEmployeeMap[e]) byEmployeeMap[e] = { empName: e, receipts: 0, quantity: 0 };
+      byEmployeeMap[e].receipts += 1;
+      byEmployeeMap[e].quantity += (r.most || 0);
+    });
+
+    const byModel = Object.values(byModelMap).sort((a: any, b: any) => b.quantity - a.quantity);
+    const byEmployee = Object.values(byEmployeeMap).sort((a: any, b: any) => b.quantity - a.quantity);
+
+    const summary = {
+      totalReceipts: receipts.length,
+      totalQuantity,
+      uniqueModels: byModel.length,
+      uniqueEmployees: byEmployee.length
+    };
+
+    return { success: true, data: detail, byModel, byEmployee, summary };
+  } catch (e) {
+    console.error(e);
+    return { success: false, error: 'فشل جلب تقرير المستودع' };
+  }
+}
+
+export async function bulkUploadWarehouseReceipts(receiptsData: any[]) {
+  try {
+    if (!Array.isArray(receiptsData) || receiptsData.length === 0) {
+      return { success: false, error: 'لا توجد بيانات لإضافتها' };
+    }
+
+    let inserted = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    for (const row of receiptsData) {
+      const uniqueid = row.uniqueid || row.معرف;
+      const dateStr = row.date || row.التاريخ;
+      const empName = row.empName || row['emp name'] || row.الموظف || row['اسم الموظف'] || '';
+      const modelNo = row.modelNo || row['model no'] || row['كود الموديل'] || row.موديل;
+      const mostStr = row.most || row.الكمية;
+      const color = row.color || row.tadakhol || row.اللون || null;
+
+      if (!uniqueid || !modelNo || !dateStr) {
+        errors.push(`صف ناقص (معرف: ${uniqueid || '؟'}) - يجب توفر المعرف والتاريخ والموديل`);
+        continue;
+      }
+
+      const itemDate = new Date(dateStr);
+      if (isNaN(itemDate.getTime())) {
+        errors.push(`تاريخ غير صالح في السجل ${uniqueid}`);
+        continue;
+      }
+
+      const parsedMost = parseInt(mostStr);
+      if (isNaN(parsedMost)) {
+        errors.push(`كمية غير صالحة في السجل ${uniqueid}`);
+        continue;
+      }
+
+      const existing = await prisma.warehouseReceipt.findUnique({
+        where: { uniqueid: String(uniqueid) }
+      });
+
+      if (existing) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        await prisma.warehouseReceipt.create({
+          data: {
+            uniqueid: String(uniqueid),
+            date: itemDate,
+            empName: String(empName || ''),
+            modelNo: String(modelNo),
+            most: parsedMost,
+            color: color ? String(color) : null
+          }
+        });
+        inserted++;
+      } catch (e: any) {
+        if (e.code === 'P2002') {
+          skipped++;
+        } else {
+          errors.push(`فشل إضافة ${uniqueid}: ${e.message}`);
+        }
+      }
+    }
+
+    return { success: true, inserted, skipped, errors };
+  } catch (e) {
+    console.error(e);
+    return { success: false, error: 'فشل الرفع الجماعي' };
+  }
+}
+
 export async function getEmployeePerformance() {
     try {
         const users = await prisma.user.findMany({

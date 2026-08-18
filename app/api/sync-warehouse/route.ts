@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     for (const row of dataRows) {
       if (row.length < 5) continue;
       
-      const [uniqueid, dateStr, empName, modelNo, mostStr] = row;
+      const [uniqueid, dateStr, empName, modelNo, mostStr, , color] = row;
       
       if (!uniqueid || !modelNo) continue;
       
@@ -66,7 +66,8 @@ export async function POST(request: NextRequest) {
           date: itemDate,
           empName: empName || '',
           modelNo,
-          most: parseInt(mostStr) || 0
+          most: parseInt(mostStr) || 0,
+          color: color || null
         }
       });
       inserted++;

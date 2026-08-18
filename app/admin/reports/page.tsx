@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react';
-import { getInventoryReport, getSafesList, getSafeLedger, getEmployeePerformance } from '@/app/report-actions';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { getInventoryReport, getSafesList, getSafeLedger, getEmployeePerformance, getWarehouseReport, bulkUploadWarehouseReceipts } from '@/app/report-actions';
 import { useSession } from 'next-auth/react';
 import * as XLSX from 'xlsx';
 
@@ -18,7 +18,7 @@ const exportToExcel = (data: any[], fileName: string) => {
 
 
 export default function ReportsPage() {
-  const [activeTab, setActiveTab] = useState<'INVENTORY' | 'SAFE' | 'EMPLOYEES'>('INVENTORY');
+  const [activeTab, setActiveTab] = useState<'INVENTORY' | 'SAFE' | 'EMPLOYEES' | 'WAREHOUSE'>('INVENTORY');
   
   return (
     <div className="min-h-screen print:min-h-0 bg-gray-50 p-4 md:p-6 print:p-0 print:bg-white" dir="rtl">
@@ -103,12 +103,20 @@ export default function ReportsPage() {
             <span className="text-2xl">👥</span>
             أداء فريق المبيعات
         </button>
+        <button 
+            onClick={() => setActiveTab('WAREHOUSE')}
+            className={`px-10 py-5 font-black whitespace-nowrap transition-all rounded-t-3xl flex items-center gap-3 ${activeTab === 'WAREHOUSE' ? 'bg-white border-t-4 border-amber-500 text-amber-600 shadow-[0_-4px_15px_rgba(0,0,0,0.08)]' : 'bg-transparent text-gray-400 hover:text-gray-600'}`}
+        >
+            <span className="text-2xl">🏭</span>
+            إيصالات المستودع
+        </button>
       </div>
 
       <div id="printable-area" className="bg-white p-4 md:p-10 rounded-[2.5rem] shadow-sm border border-gray-50 print:min-h-0 print:border-none print:shadow-none print:p-0">
           {activeTab === 'INVENTORY' && <InventoryReportView />}
           {activeTab === 'SAFE' && <SafeLedgerView />}
           {activeTab === 'EMPLOYEES' && <EmployeePerformanceView />}
+          {activeTab === 'WAREHOUSE' && <WarehouseReportView />}
       </div>
     </div>
   );
@@ -599,6 +607,284 @@ function EmployeePerformanceView() {
                     </tbody>
                 </table>
             </div>
+        </div>
+    );
+}
+
+function WarehouseReportView() {
+    const getTodayDateString = () => new Date().toISOString().split('T')[0];
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
+    const [detail, setDetail] = useState<any[]>([]);
+    const [byModel, setByModel] = useState<any[]>([]);
+    const [byEmployee, setByEmployee] = useState<any[]>([]);
+    const [summary, setSummary] = useState<any>({});
+    const [loading, setLoading] = useState(false);
+    const [viewMode, setViewMode] = useState<'DETAIL' | 'MODEL' | 'EMPLOYEE'>('DETAIL');
+    const [uploading, setUploading] = useState(false);
+    const [uploadResult, setUploadResult] = useState<any>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const downloadTemplate = () => {
+        const template = [
+            {
+                'معرف فريد (uniqueid)': 'ex: 17561165692176nwfn',
+                'التاريخ (date)': '8/25/2025 13:09:29',
+                'اسم الموظف (emp name)': 'ابو مالك',
+                'كود الموديل (model no)': '3760',
+                'الكمية (most)': 488,
+                'اللون (tadakhol)': 'رصاصي',
+            },
+        ];
+        const ws = XLSX.utils.json_to_sheet(template);
+        ws['!cols'] = [{ wch: 24 }, { wch: 22 }, { wch: 22 }, { wch: 22 }, { wch: 14 }, { wch: 16 }];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'إيصالات المستودع');
+        XLSX.writeFile(wb, 'Warehouse_Receipts_Template.xlsx');
+    };
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (!file) return;
+
+        setUploading(true);
+        setUploadResult(null);
+        try {
+            const buffer = await file.arrayBuffer();
+            const workbook = XLSX.read(buffer, { type: 'array' });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+            const res = await bulkUploadWarehouseReceipts(rows as any[]);
+            setUploadResult(res);
+            if (res.success) {
+                fetchReport();
+            }
+        } catch (err: any) {
+            setUploadResult({ success: false, error: 'فشل قراءة الملف: ' + (err.message || err) });
+        }
+        setUploading(false);
+    };
+
+    const fetchReport = useCallback(async () => {
+        setLoading(true);
+        const res = await getWarehouseReport(startDate || undefined, endDate || undefined);
+        if (res.success) {
+            setDetail(res.data || []);
+            setByModel(res.byModel || []);
+            setByEmployee(res.byEmployee || []);
+            setSummary(res.summary || {});
+        } else {
+            setDetail([]);
+            setByModel([]);
+            setByEmployee([]);
+            setSummary({});
+        }
+        setLoading(false);
+    }, [startDate, endDate]);
+
+    useEffect(() => { fetchReport(); }, [fetchReport]);
+
+    useEffect(() => {
+        const handleDownload = () => {
+            const excelData = detail.map(row => ({
+                "التاريخ": new Date(row.date).toLocaleDateString('ar-EG'),
+                "اسم الموظف": row.empName,
+                "كود الموديل": row.modelNo,
+                "اللون": row.color,
+                "الكمية": row.most,
+                "مصدر": row.synced ? 'مزامنة' : 'يدوي'
+            }));
+            exportToExcel(excelData, "Warehouse_Receipts_Report");
+        };
+        window.addEventListener('download-excel', handleDownload);
+        return () => window.removeEventListener('download-excel', handleDownload);
+    }, [detail]);
+
+    const summaryCards = [
+        { label: 'إجمالي الإيصالات', value: summary.totalReceipts, color: 'bg-blue-600', icon: '🧾' },
+        { label: 'إجمالي الكمية', value: summary.totalQuantity, color: 'bg-amber-500', icon: '📦' },
+        { label: 'عدد الموديلات', value: summary.uniqueModels, color: 'bg-emerald-600', icon: '🏷️' },
+        { label: 'عدد الموظفين', value: summary.uniqueEmployees, color: 'bg-purple-600', icon: '👷' },
+    ];
+
+    return (
+        <div className="space-y-10 animate-in slide-in-from-bottom-6 duration-700">
+            <h2 className="text-3xl font-black text-gray-800 border-b pb-6">تقرير إيصالات المستودع</h2>
+
+            <div className="flex flex-wrap gap-4 items-end bg-amber-50/70 p-8 rounded-[2.5rem] border border-amber-200/60 shadow-inner print:hidden">
+                <div className="w-full sm:w-auto">
+                    <label className="block text-[10px] font-black mb-3 text-amber-600 uppercase tracking-[0.2em]">الفترة من</label>
+                    <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full p-4 bg-white border border-amber-200 rounded-[1.2rem] shadow-sm font-bold" />
+                </div>
+                <div className="w-full sm:w-auto">
+                    <label className="block text-[10px] font-black mb-3 text-amber-600 uppercase tracking-[0.2em]">الفترة إلى</label>
+                    <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full p-4 bg-white border border-amber-200 rounded-[1.2rem] shadow-sm font-bold" />
+                </div>
+                <button onClick={fetchReport} className="w-full sm:w-auto bg-amber-500 text-white px-14 py-4 rounded-[1.2rem] font-black shadow-2xl shadow-amber-200 hover:bg-amber-600 hover:scale-105 transition-all flex items-center justify-center gap-3">
+                    تحديث البيانات ⟳
+                </button>
+            </div>
+
+            <div className="flex flex-wrap gap-4 items-center bg-slate-900 p-6 rounded-[2rem] shadow-xl print:hidden">
+                <span className="text-white font-black text-sm flex items-center gap-2">
+                    <span className="text-2xl">📥</span>
+                    رفع جماعي للإيصالات
+                </span>
+                <button onClick={downloadTemplate} className="bg-white text-slate-900 px-6 py-3 rounded-xl font-black shadow-lg hover:bg-gray-100 transition-all flex items-center gap-2">
+                    <span>📄</span>
+                    تحميل نموذج Excel استرشادي
+                </button>
+                <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploading}
+                    className={`bg-amber-500 text-white px-6 py-3 rounded-xl font-black shadow-lg transition-all flex items-center gap-2 ${uploading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-amber-600'}`}
+                >
+                    <span>{uploading ? '⏳ جاري الرفع...' : '⬆️ رفع ملف Excel'}</span>
+                </button>
+                <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".xlsx,.xls,.csv"
+                    className="hidden"
+                    onChange={handleFileUpload}
+                />
+            </div>
+
+            {uploadResult && (
+                <div className={`p-6 rounded-[2rem] border-2 font-bold ${uploadResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                    {uploadResult.success ? (
+                        <div className="space-y-2">
+                            <div className="text-lg font-black">✅ تمت عملية الرفع بنجاح</div>
+                            <div className="flex flex-wrap gap-4 text-sm">
+                                <span className="bg-emerald-200 px-4 py-1.5 rounded-xl font-black">أُضيف: {uploadResult.inserted || 0}</span>
+                                <span className="bg-slate-200 px-4 py-1.5 rounded-xl font-black">مكرر (تم التخطي): {uploadResult.skipped || 0}</span>
+                            </div>
+                            {uploadResult.errors && uploadResult.errors.length > 0 && (
+                                <div className="text-xs text-red-600 mt-2 max-h-32 overflow-y-auto">
+                                    {uploadResult.errors.map((err: string, i: number) => (
+                                        <div key={i}>• {err}</div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <div>❌ فشل الرفع: {uploadResult.error || 'خطأ غير معروف'}</div>
+                    )}
+                    <button onClick={() => setUploadResult(null)} className="mt-3 text-xs font-black opacity-60 hover:opacity-100">إغلاق ✕</button>
+                </div>
+            )}
+
+            {loading ? (
+                <div className="text-center py-32 text-gray-300 font-black text-xl animate-pulse italic">جاري جلب إيصالات المستودع...</div>
+            ) : (
+                <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                        {summaryCards.map(card => (
+                            <div key={card.label} className={`${card.color} text-white rounded-[2rem] p-6 shadow-xl transform hover:-translate-y-1 transition-all duration-300`}>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-3xl">{card.icon}</span>
+                                    <span className="text-4xl font-black tracking-tighter">{card.value}</span>
+                                </div>
+                                <div className="mt-3 text-sm font-bold opacity-90">{card.label}</div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="bg-gray-100 p-2 rounded-2xl flex flex-wrap gap-2 items-center shadow-inner w-fit print:hidden">
+                        <button onClick={() => setViewMode('DETAIL')} className={`px-6 py-3 rounded-xl font-bold transition-all ${viewMode === 'DETAIL' ? 'bg-white shadow text-amber-600' : 'text-gray-400'}`}>كل الإيصالات</button>
+                        <button onClick={() => setViewMode('MODEL')} className={`px-6 py-3 rounded-xl font-bold transition-all ${viewMode === 'MODEL' ? 'bg-white shadow text-amber-600' : 'text-gray-400'}`}>حسب الموديل</button>
+                        <button onClick={() => setViewMode('EMPLOYEE')} className={`px-6 py-3 rounded-xl font-bold transition-all ${viewMode === 'EMPLOYEE' ? 'bg-white shadow text-amber-600' : 'text-gray-400'}`}>حسب الموظف</button>
+                    </div>
+
+                    <div className="overflow-x-auto rounded-[3rem] border border-amber-100 shadow-2xl shadow-amber-100/50 bg-white">
+                        {viewMode === 'DETAIL' && (
+                            <table className="w-full text-sm text-right border-collapse">
+                                <thead className="bg-amber-500 text-white font-black uppercase text-[9px] tracking-widest">
+                                    <tr>
+                                        <th className="p-6 border-b">تاريخ الإيصال</th>
+                                        <th className="p-6 border-b">اسم الموظف</th>
+                                        <th className="p-6 border-b">كود الموديل</th>
+                                        <th className="p-6 border-b">اللون</th>
+                                        <th className="p-6 border-b text-center">الكمية (الأكثر)</th>
+                                        <th className="p-6 border-b text-center">المصدر</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-amber-50">
+                                    {detail.length === 0 && (
+                                        <tr>
+                                            <td colSpan={6} className="p-16 text-center text-gray-300 font-black text-lg">
+                                                لا توجد إيصالات مستودع حتى الآن. قم بمزامنة إيصالات المستودع من صفحة الفرز أولاً.
+                                            </td>
+                                        </tr>
+                                    )}
+                                    {detail.map((row: any) => (
+                                        <tr key={row.uniqueid} className="hover:bg-amber-50/40 transition-colors">
+                                            <td className="p-6 whitespace-nowrap text-gray-400 font-mono text-xs">{new Date(row.date).toLocaleDateString('ar-EG')}</td>
+                                            <td className="p-6 font-black text-slate-700">{row.empName}</td>
+                                            <td className="p-6 font-black text-xl text-blue-700 tracking-tight">{row.modelNo}</td>
+                                            <td className="p-6">
+                                                <span className="font-bold text-slate-600 bg-gray-100 px-3 py-1.5 rounded-xl text-xs">{row.color}</span>
+                                            </td>
+                                            <td className="p-6 text-center font-black text-2xl text-amber-600">{row.most}</td>
+                                            <td className="p-6 text-center">
+                                                <span className={`px-4 py-2 rounded-2xl text-xs font-black shadow-sm ${row.synced ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                                                    {row.synced ? '🔄 مزامنة' : 'يدوي'}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+
+                        {viewMode === 'MODEL' && (
+                            <table className="w-full text-sm text-right border-collapse">
+                                <thead className="bg-slate-900 text-white font-black uppercase text-[9px] tracking-widest">
+                                    <tr>
+                                        <th className="p-6 border-b">كود الموديل</th>
+                                        <th className="p-6 border-b text-center">عدد الإيصالات</th>
+                                        <th className="p-6 border-b text-center">إجمالي الكمية</th>
+                                        <th className="p-6 border-b text-center">آخر إيصال</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-50">
+                                    {byModel.map((row: any) => (
+                                        <tr key={row.modelNo} className="hover:bg-amber-50/40 transition-colors">
+                                            <td className="p-6 font-black text-xl text-blue-700 tracking-tight">{row.modelNo}</td>
+                                            <td className="p-6 text-center font-bold text-gray-500">{row.receipts}</td>
+                                            <td className="p-6 text-center font-black text-2xl text-amber-600">{row.quantity}</td>
+                                            <td className="p-6 text-center text-gray-400 font-mono text-xs">{new Date(row.lastDate).toLocaleDateString('ar-EG')}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+
+                        {viewMode === 'EMPLOYEE' && (
+                            <table className="w-full text-sm text-right border-collapse">
+                                <thead className="bg-purple-600 text-white font-black uppercase text-[9px] tracking-widest">
+                                    <tr>
+                                        <th className="p-6 border-b">اسم الموظف</th>
+                                        <th className="p-6 border-b text-center">عدد الإيصالات</th>
+                                        <th className="p-6 border-b text-center">إجمالي الكمية</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-purple-50">
+                                    {byEmployee.map((row: any) => (
+                                        <tr key={row.empName} className="hover:bg-purple-50/40 transition-colors">
+                                            <td className="p-6 font-black text-slate-800">{row.empName}</td>
+                                            <td className="p-6 text-center font-bold text-gray-500">{row.receipts}</td>
+                                            <td className="p-6 text-center font-black text-2xl text-purple-600">{row.quantity}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+                </>
+            )}
         </div>
     );
 }

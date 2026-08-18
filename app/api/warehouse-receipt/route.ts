@@ -10,7 +10,7 @@ export async function POST(request: Request) {
     
     console.log("POST Incoming Data:", body);
 
-    const { uniqueid, date, empName, modelNo, most } = body;
+    const { uniqueid, date, empName, modelNo, most, color } = body;
 
     // التحقق من صحة البيانات
     if (!uniqueid || !date || !empName || !modelNo) {
@@ -35,7 +35,8 @@ export async function POST(request: Request) {
         date: new Date(date),
         empName: String(empName),
         modelNo: String(modelNo),
-        most: parsedMost
+        most: parsedMost,
+        color: color ? String(color) : null
       }
     });
 
@@ -72,7 +73,7 @@ export async function PUT(request: Request) {
     const body = await request.json();
     console.log("PUT Incoming Data:", body);
 
-    const { uniqueid, empName, modelNo, most } = body;
+    const { uniqueid, empName, modelNo, most, color } = body;
 
     if (!uniqueid) {
       return NextResponse.json(
@@ -84,7 +85,7 @@ export async function PUT(request: Request) {
     const parsedMost = parseInt(most);
 
     // عملية التحديث
-    // ملاحظة: نحدث فقط الحقول التي تم إرسالها (empName, modelNo, most)
+    // ملاحظة: نحدث فقط الحقول التي تم إرسالها (empName, modelNo, most, color)
     const updatedReceipt = await prisma.warehouseReceipt.update({
       where: {
         uniqueid: String(uniqueid), // البحث عن السجل باستخدام uniqueid
@@ -93,6 +94,7 @@ export async function PUT(request: Request) {
         empName: String(empName),
         modelNo: String(modelNo),
         most: isNaN(parsedMost) ? undefined : parsedMost, // تحديث الكمية فقط إذا كانت رقماً صالحاً
+        color: color !== undefined ? (color ? String(color) : null) : undefined,
       },
     });
 

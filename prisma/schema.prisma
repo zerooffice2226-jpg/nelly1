@@ -135,6 +135,7 @@ model WarehouseReceipt {
   empName  String                   
   modelNo  String                   
   most     Int                      
+  color    String?                  
 
   warehouseSyncRecord WarehouseSyncRecord? // Relation to the sync record
 

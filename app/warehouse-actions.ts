@@ -60,7 +60,7 @@ export async function syncWarehouseFromSheets(startDateStr: string) {
     const newReceiptsData: any[] = [];
 
     for (const line of lines) {
-        const [uniqueid, date, empName, modelNo, most] = line.split(",").map(v => v.trim());
+        const [uniqueid, date, empName, modelNo, most, , color] = line.split(",").map(v => v.trim());
         
         const rowDate = new Date(date);
         if (!uniqueid || !date || rowDate < syncStartDate) {
@@ -73,6 +73,7 @@ export async function syncWarehouseFromSheets(startDateStr: string) {
             empName,
             modelNo,
             most: parseInt(most) || 0,
+            color: color || null,
         });
     }
 

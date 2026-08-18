@@ -10,6 +10,10 @@ const nextConfig = {
   },
 };
 module.exports = {
-  allowedDevOrigins: ['3000-firebase-ma3rad-1774449402960.cluster-cbeiita7rbe7iuwhvjs5zww2i4.cloudworkstations.dev'],
+  allowedDevOrigins: [
+    '3000-firebase-ma3rad-1774449402960.cluster-cbeiita7rbe7iuwhvjs5zww2i4.cloudworkstations.dev',
+    '3000-firebase-ma3rad-1775811260599.cluster-64pjnskmlbaxowh5lzq6i7v4ra.cloudworkstations.dev',
+    '*.monkeycode-ai.live',
+  ],
 }
 export default nextConfig;
