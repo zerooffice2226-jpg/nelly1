@@ -62,6 +62,7 @@ async function getOrdersWithAllocation() {
   });
 
   const orders = await prisma.order.findMany({
+    where: { isDeferredCustomer: false },
     orderBy: { createdAt: 'asc' },
     include: {
       customer: {

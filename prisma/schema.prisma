@@ -70,6 +70,7 @@ model Order {
   deposit     Float       @default(0.0)
   currency    String      @default("EGP")
   discount    Float       @default(0.0) 
+  isDeferredCustomer Boolean @default(false)
 
   totalAmount Float
   userId      String

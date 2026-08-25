@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { getUserOrders, deleteOrder, getSettings } from '@/app/actions';
+import { getUserOrders, deleteOrder, getSettings, toggleDeferredCustomer } from '@/app/actions';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 // مكتبات الطباعة
@@ -118,6 +118,18 @@ export default function OrdersListPage() {
       }
     }
   };
+
+    const handleToggleDeferredCustomer = async (order: any) => {
+        const result = await toggleDeferredCustomer(order.id);
+        if (result.success) {
+            setOrders(orders.map((currentOrder) => currentOrder.id === order.id
+                ? { ...currentOrder, isDeferredCustomer: result.isDeferredCustomer }
+                : currentOrder
+            ));
+        } else {
+            alert(`فشل تحديث تمييز العميل: ${result.error}`);
+        }
+    };
 
   const handlePdfClick = (order: any) => {
       setIsGeneratingPdf(true);
@@ -300,6 +312,16 @@ export default function OrdersListPage() {
                             </Link>
                         )}
                     </div>
+
+                    <button
+                        onClick={() => handleToggleDeferredCustomer(order)}
+                        className={`w-full mt-2 py-2 rounded-lg text-xs md:text-sm font-bold border ${order.isDeferredCustomer
+                            ? 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200'
+                            : 'bg-orange-100 text-orange-700 border-orange-200 hover:bg-orange-200'
+                        }`}
+                    >
+                        {order.isDeferredCustomer ? 'إلغاء التمييز' : 'تمييز كعميل آجل'}
+                    </button>
 
                     {(userRole === 'ADMIN' || userRole === 'OWNER') && (
                         <button onClick={() => handleDelete(order.id)} className="w-full mt-2 text-red-500 text-xs font-bold py-2 border border-red-100 rounded hover:bg-red-50">

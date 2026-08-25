@@ -119,6 +119,7 @@ export async function getProductsForSearch() {
       include: {
         // نجلب مبيعات كل صنف لنحسب الرصيد الفعلي حالاً
         orderItems: {
+          where: { order: { isDeferredCustomer: false } },
           select: { quantity: true }
         }
       },
@@ -432,6 +433,34 @@ export async function deleteOrder(orderId: string) {
         console.error("Error deleting order:", error);
         return { success: false, error: error.message || 'فشل حذف الطلب' };
     }
+}
+
+export async function toggleDeferredCustomer(orderId: string) {
+  try {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { isDeferredCustomer: true },
+    })
+
+    if (!order) return { success: false, error: 'لم يتم العثور على الطلب.' }
+
+    const updatedOrder = await prisma.order.update({
+      where: { id: orderId },
+      data: { isDeferredCustomer: !order.isDeferredCustomer },
+      select: { isDeferredCustomer: true },
+    })
+
+    revalidatePath('/orders/list')
+    revalidatePath('/admin/reports')
+    revalidatePath('/admin/cash-management')
+    revalidatePath('/sorting')
+    revalidatePath('/sorting-cut')
+
+    return { success: true, isDeferredCustomer: updatedOrder.isDeferredCustomer }
+  } catch (error: any) {
+    console.error('Error toggling deferred customer:', error)
+    return { success: false, error: error.message || 'فشل تحديث تمييز العميل' }
+  }
 }
 
 

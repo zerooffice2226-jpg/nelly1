@@ -240,8 +240,55 @@ function InventoryReportView() {
         });
     }
 
+    const formatNumber = (value: number) => new Intl.NumberFormat('ar-EG').format(value || 0);
+    const formatCurrency = (value: number) => `${formatNumber(value)} ج.م`;
+
     return (
         <div className="space-y-8 print:space-y-0 print:mt-0">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 print:grid-cols-3 print:gap-3">
+                <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5 shadow-sm">
+                    <h2 className="text-lg font-black text-blue-900">إجمالي المخزون الأولي</h2>
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                        <div className="rounded-xl bg-white p-3">
+                            <div className="text-xs font-bold text-gray-500">عدد</div>
+                            <div className="mt-1 text-xl font-black text-blue-800">{formatNumber(summary.totalInitialStock)} قطعة</div>
+                        </div>
+                        <div className="rounded-xl bg-white p-3">
+                            <div className="text-xs font-bold text-gray-500">قيمة</div>
+                            <div className="mt-1 text-xl font-black text-blue-800">{formatCurrency(summary.totalInitialStockValue)}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="rounded-2xl border border-amber-100 bg-amber-50 p-5 shadow-sm">
+                    <h2 className="text-lg font-black text-amber-900">إجمالي المبيعات</h2>
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                        <div className="rounded-xl bg-white p-3">
+                            <div className="text-xs font-bold text-gray-500">عدد</div>
+                            <div className="mt-1 text-xl font-black text-amber-800">{formatNumber(summary.totalSoldUnits)} قطعة</div>
+                        </div>
+                        <div className="rounded-xl bg-white p-3">
+                            <div className="text-xs font-bold text-gray-500">قيمة</div>
+                            <div className="mt-1 text-xl font-black text-amber-800">{formatCurrency(summary.totalSalesValue)}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-5 shadow-sm">
+                    <h2 className="text-lg font-black text-emerald-900">إجمالي المخزون الحالي</h2>
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                        <div className="rounded-xl bg-white p-3">
+                            <div className="text-xs font-bold text-gray-500">عدد</div>
+                            <div className="mt-1 text-xl font-black text-emerald-800">{formatNumber(summary.totalCurrentStock)} قطعة</div>
+                        </div>
+                        <div className="rounded-xl bg-white p-3">
+                            <div className="text-xs font-bold text-gray-500">قيمة</div>
+                            <div className="mt-1 text-xl font-black text-emerald-800">{formatCurrency(summary.totalValue)}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div className="flex flex-wrap gap-4 items-center justify-between print:hidden">
                 <div className="flex gap-2 items-center flex-1 min-w-[300px]">
                     <input 

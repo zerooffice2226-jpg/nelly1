@@ -9,7 +9,8 @@ export async function getInventoryReport() {
       orderBy: { modelNo: 'asc' },
       include: {
         orderItems: {
-            include: { order: { include: { customer: true } } }
+          where: { order: { isDeferredCustomer: false } },
+          include: { order: { include: { customer: true } } }
         }
       }
     });
@@ -44,6 +45,7 @@ export async function getInventoryReport() {
     const summary = {
       totalItems: report.length,
       totalInitialStock: report.reduce((acc, item) => acc + item.initialStock, 0),
+       totalInitialStockValue: report.reduce((acc, item) => acc + (item.initialStock * (item.price || 0)), 0),
       totalCurrentStock: report.reduce((acc, item) => acc + item.currentStock, 0),
       totalSoldUnits: report.reduce((acc, item) => acc + item.totalSold, 0), 
       totalSalesValue: report.reduce((acc, item) => acc + item.totalSoldValue, 0),
@@ -86,6 +88,7 @@ export async function getSafeLedger(safeId: string, startDate?: string, endDate?
       where: { 
           safeId, 
           deposit: { gt: 0 }, 
+          isDeferredCustomer: false,
           createdAt: startDate || endDate ? dateFilter : undefined 
       },
       include: { customer: true, user: true }
@@ -313,6 +316,7 @@ export async function getEmployeePerformance() {
         const users = await prisma.user.findMany({
             include: {
                 orders: {
+                  where: { isDeferredCustomer: false },
                     include: { items: true }
                 }
             }
