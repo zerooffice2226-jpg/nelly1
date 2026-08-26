@@ -127,7 +127,6 @@ function InventoryReportView() {
     const userRole = session?.user?.role;
 
     const [data, setData] = useState<any[]>([]); 
-    const [summary, setSummary] = useState<any>({});
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [viewMode, setViewMode] = useState<'COLOR' | 'MODEL'>('COLOR');
@@ -156,10 +155,8 @@ function InventoryReportView() {
         getInventoryReport().then(res => {
             if(res.success && res.data) { 
                 setData(res.data); 
-                setSummary(res.summary || {}); 
             } else {
                 setData([]);
-                setSummary({});
             }
             setLoading(false);
         });
@@ -171,13 +168,15 @@ function InventoryReportView() {
             if (!groups[item.modelNo]) {
                 groups[item.modelNo] = {
                     id: item.modelNo, modelNo: item.modelNo, material: item.material,
-                    colors: [], initialStock: 0, totalSold: 0, currentStock: 0, currentValue: 0, history: []
+                    colors: [], initialStock: 0, initialStockValue: 0, totalSold: 0, totalSoldValue: 0, currentStock: 0, currentValue: 0, history: []
                 };
             }
             const g = groups[item.modelNo];
             g.colors.push({ name: item.color, sold: item.totalSold, stock: item.currentStock });
             g.initialStock += item.initialStock;
+            g.initialStockValue += item.initialStock * (item.price || 0);
             g.totalSold += item.totalSold;
+            g.totalSoldValue += item.totalSoldValue;
             g.currentStock += item.currentStock;
             g.currentValue += item.currentValue;
             if (item.history) {
@@ -240,6 +239,22 @@ function InventoryReportView() {
         });
     }
 
+    const filteredSummary = displayData.reduce((totals: any, item: any) => ({
+        totalInitialStock: totals.totalInitialStock + (item.initialStock || 0),
+        totalInitialStockValue: totals.totalInitialStockValue + (item.initialStockValue ?? ((item.initialStock || 0) * (item.price || 0))),
+        totalSoldUnits: totals.totalSoldUnits + (item.totalSold || 0),
+        totalSalesValue: totals.totalSalesValue + (item.totalSoldValue || 0),
+        totalCurrentStock: totals.totalCurrentStock + (item.currentStock || 0),
+        totalValue: totals.totalValue + (item.currentValue || 0)
+    }), {
+        totalInitialStock: 0,
+        totalInitialStockValue: 0,
+        totalSoldUnits: 0,
+        totalSalesValue: 0,
+        totalCurrentStock: 0,
+        totalValue: 0
+    });
+
     const formatNumber = (value: number) => new Intl.NumberFormat('ar-EG').format(value || 0);
     const formatCurrency = (value: number) => `${formatNumber(value)} ج.م`;
 
@@ -251,11 +266,11 @@ function InventoryReportView() {
                     <div className="mt-4 grid grid-cols-2 gap-3">
                         <div className="rounded-xl bg-white p-3">
                             <div className="text-xs font-bold text-gray-500">عدد</div>
-                            <div className="mt-1 text-xl font-black text-blue-800">{formatNumber(summary.totalInitialStock)} قطعة</div>
+                            <div className="mt-1 text-xl font-black text-blue-800">{formatNumber(filteredSummary.totalInitialStock)} قطعة</div>
                         </div>
                         <div className="rounded-xl bg-white p-3">
                             <div className="text-xs font-bold text-gray-500">قيمة</div>
-                            <div className="mt-1 text-xl font-black text-blue-800">{formatCurrency(summary.totalInitialStockValue)}</div>
+                            <div className="mt-1 text-xl font-black text-blue-800">{formatCurrency(filteredSummary.totalInitialStockValue)}</div>
                         </div>
                     </div>
                 </div>
@@ -265,11 +280,11 @@ function InventoryReportView() {
                     <div className="mt-4 grid grid-cols-2 gap-3">
                         <div className="rounded-xl bg-white p-3">
                             <div className="text-xs font-bold text-gray-500">عدد</div>
-                            <div className="mt-1 text-xl font-black text-amber-800">{formatNumber(summary.totalSoldUnits)} قطعة</div>
+                            <div className="mt-1 text-xl font-black text-amber-800">{formatNumber(filteredSummary.totalSoldUnits)} قطعة</div>
                         </div>
                         <div className="rounded-xl bg-white p-3">
                             <div className="text-xs font-bold text-gray-500">قيمة</div>
-                            <div className="mt-1 text-xl font-black text-amber-800">{formatCurrency(summary.totalSalesValue)}</div>
+                            <div className="mt-1 text-xl font-black text-amber-800">{formatCurrency(filteredSummary.totalSalesValue)}</div>
                         </div>
                     </div>
                 </div>
@@ -279,11 +294,11 @@ function InventoryReportView() {
                     <div className="mt-4 grid grid-cols-2 gap-3">
                         <div className="rounded-xl bg-white p-3">
                             <div className="text-xs font-bold text-gray-500">عدد</div>
-                            <div className="mt-1 text-xl font-black text-emerald-800">{formatNumber(summary.totalCurrentStock)} قطعة</div>
+                            <div className="mt-1 text-xl font-black text-emerald-800">{formatNumber(filteredSummary.totalCurrentStock)} قطعة</div>
                         </div>
                         <div className="rounded-xl bg-white p-3">
                             <div className="text-xs font-bold text-gray-500">قيمة</div>
-                            <div className="mt-1 text-xl font-black text-emerald-800">{formatCurrency(summary.totalValue)}</div>
+                            <div className="mt-1 text-xl font-black text-emerald-800">{formatCurrency(filteredSummary.totalValue)}</div>
                         </div>
                     </div>
                 </div>
