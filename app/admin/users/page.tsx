@@ -56,7 +56,7 @@ export default function UsersPage() {
 
       {/* Form */}
       <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow space-y-4 max-w-2xl">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-bold mb-1">كود الدخول</label>
             <input type="text" className="w-full border p-2 rounded" value={formData.code} onChange={e => setFormData({...formData, code: e.target.value})} />
@@ -83,8 +83,8 @@ export default function UsersPage() {
       </form>
 
       {/* Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="w-full text-sm text-right">
+      <div className="bg-white rounded-lg shadow overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm text-right">
           <thead className="bg-gray-100 text-gray-700">
             <tr>
               <th className="p-3">الكود</th>
