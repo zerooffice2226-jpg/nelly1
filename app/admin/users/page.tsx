@@ -1,10 +1,11 @@
 'use client'
 import { useState, useEffect } from 'react';
-import { addUser, getUsers, deleteUser } from '@/app/admin-actions';
+import { addUser, getUsers, deleteUser, updateUser } from '@/app/admin-actions';
 
 export default function UsersPage() {
   const [users, setUsers] = useState<any[]>([]);
   const [formData, setFormData] = useState({ code: '', name: '', password: '', role: 'EMPLOYEE' });
+  const [editingUser, setEditingUser] = useState<{ id: string; code: string; name: string; role: string } | null>(null);
 
   useEffect(() => {
     getUsers().then(setUsers);
@@ -26,8 +27,26 @@ export default function UsersPage() {
 
   const handleDelete = async (id: string) => {
     if (confirm('حذف المستخدم؟')) {
-      await deleteUser(id);
-      setUsers(users.filter(u => u.id !== id));
+      const res = await deleteUser(id);
+      if (res.success) setUsers(users.filter(u => u.id !== id));
+      else alert('تعذر حذف المستخدم');
+    }
+  };
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser?.code || !editingUser.name) return alert('البيانات ناقصة');
+
+    const res = await updateUser(editingUser.id, {
+      code: editingUser.code,
+      name: editingUser.name,
+      role: editingUser.role
+    });
+    if (res.success) {
+      setUsers(users.map(user => user.id === editingUser.id ? { ...user, ...editingUser } : user));
+      setEditingUser(null);
+    } else {
+      alert('خطأ: ' + res.error);
     }
   };
 
@@ -77,18 +96,50 @@ export default function UsersPage() {
           <tbody>
             {users.map(u => (
               <tr key={u.id} className="border-b">
-                <td className="p-3 font-bold">{u.code}</td>
-                <td className="p-3">{u.name}</td>
+                {editingUser?.id === u.id ? (
+                  <>
+                    <td className="p-3">
+                      <input className="w-full border p-2 rounded" value={editingUser!.code} onChange={e => setEditingUser(current => current ? { ...current, code: e.target.value } : null)} />
+                    </td>
+                    <td className="p-3">
+                      <input className="w-full border p-2 rounded" value={editingUser!.name} onChange={e => setEditingUser(current => current ? { ...current, name: e.target.value } : null)} />
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="p-3 font-bold">{u.code}</td>
+                    <td className="p-3">{u.name}</td>
+                  </>
+                )}
                 <td className="p-3">
+                  {editingUser?.id === u.id ? (
+                    <select className="w-full border p-2 rounded" value={editingUser!.role} onChange={e => setEditingUser(current => current ? { ...current, role: e.target.value } : null)}>
+                      <option value="EMPLOYEE">موظف (بيع فقط)</option>
+                      <option value="ACCOUNTANT">محاسب</option>
+                      <option value="ADMIN">مدير نظام</option>
+                      <option value="OWNER">صاحب شركة</option>
+                    </select>
+                  ) : (
                     <span className={`px-2 py-1 rounded text-xs font-bold 
                         ${u.role === 'ADMIN' ? 'bg-red-100 text-red-700' : 
                           u.role === 'ACCOUNTANT' ? 'bg-purple-100 text-purple-700' : 
                           'bg-green-100 text-green-700'}`}>
                         {u.role}
                     </span>
+                  )}
                 </td>
                 <td className="p-3">
-                  <button onClick={() => handleDelete(u.id)} className="text-red-600 font-bold hover:underline">حذف</button>
+                  {editingUser?.id === u.id ? (
+                    <form onSubmit={handleUpdate} className="flex gap-3">
+                      <button type="submit" className="text-green-600 font-bold hover:underline">حفظ</button>
+                      <button type="button" onClick={() => setEditingUser(null)} className="text-gray-600 font-bold hover:underline">إلغاء</button>
+                    </form>
+                  ) : (
+                    <div className="flex gap-3">
+                      <button onClick={() => setEditingUser({ id: u.id, code: u.code, name: u.name, role: u.role })} className="text-blue-600 font-bold hover:underline">تعديل</button>
+                      <button onClick={() => handleDelete(u.id)} className="text-red-600 font-bold hover:underline">حذف</button>
+                    </div>
+                  )}
                 </td>
               </tr>
             ))}

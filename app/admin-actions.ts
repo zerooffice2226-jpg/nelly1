@@ -36,6 +36,28 @@ export async function deleteUser(id: string) {
   } catch (e) { return { success: false }; }
 }
 
+export async function updateUser(id: string, data: { code: string; name: string; role: string }) {
+    try {
+        const existingUser = await prisma.user.findFirst({
+            where: { code: data.code, NOT: { id } }
+        });
+        if (existingUser) return { success: false, error: 'الكود مستخدم من قبل' };
+
+        await prisma.user.update({
+            where: { id },
+            data: {
+                code: data.code,
+                name: data.name,
+                role: data.role
+            }
+        });
+        revalidatePath('/admin/users');
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: 'تعذر تعديل المستخدم' };
+    }
+}
+
 export async function getUsers() {
   const users = await prisma.user.findMany({ orderBy: { id: 'desc' } });
   return JSON.parse(JSON.stringify(users));
