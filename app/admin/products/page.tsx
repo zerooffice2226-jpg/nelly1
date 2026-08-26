@@ -220,6 +220,30 @@ export default function ProductsPage() {
     XLSX.writeFile(wb, "Products_Template.xlsx");
   };
 
+    const downloadProducts = () => {
+        if (products.length === 0) {
+            alert('لا توجد أصناف حالياً للتنزيل');
+            return;
+        }
+
+        const productData = products.map(product => ({
+            modelNo: product.modelNo,
+            description: product.description || '',
+            material: product.material || '',
+            color: product.color,
+            price: product.price,
+            discount: product.discount || 0,
+            stockQty: product.stockQty,
+            status: product.status
+        }));
+        const ws = XLSX.utils.json_to_sheet(productData, {
+            header: ['modelNo', 'description', 'material', 'color', 'price', 'discount', 'stockQty', 'status']
+        });
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Products");
+        XLSX.writeFile(wb, "Uploaded_Products.xlsx");
+    };
+
   // 👇 تعديل منطق الرفع ليكون أكثر تحملاً للأعداد الكبيرة (1700+) 👇
   const handleFileUpload = (e: any) => {
     const file = e.target.files[0];
@@ -403,7 +427,10 @@ export default function ProductsPage() {
             <div className="w-full">
                 <h3 className="font-bold text-blue-800 text-sm md:text-lg">📥 استيراد Excel (يدعم الأعداد الكبيرة)</h3>
                 <div className="flex justify-between items-center mt-1">
-                    <button onClick={downloadTemplate} className="text-xs text-blue-700 underline font-bold">تحميل النموذج</button>
+                    <div className="flex gap-3">
+                        <button onClick={downloadTemplate} className="text-xs text-blue-700 underline font-bold">تحميل النموذج</button>
+                        <button onClick={downloadProducts} className="text-xs text-green-700 underline font-bold">تنزيل الأصناف الحالية</button>
+                    </div>
                     <input type="file" accept=".xlsx, .xls" onChange={handleFileUpload} disabled={isUploading || isDeleting} className="text-xs bg-white p-2 rounded border cursor-pointer w-1/2" />
                 </div>
             </div>
