@@ -77,23 +77,34 @@ export default async function Home() {
           )}
         </div>
         
-        {/* Sorting Section */}
-        <div className="mt-4 pt-4 border-t-2 border-dashed">
+        {user?.role === 'OWNER' ? (
+          <div className="mt-4 pt-4 border-t-2 border-dashed">
+            <Link href="/admin/reports" className="bg-slate-900 text-white p-8 rounded-3xl shadow-xl shadow-slate-200 flex items-center justify-between hover:bg-slate-800 transition-all transform hover:scale-[1.02] active:scale-95 group">
+              <div className="flex flex-col items-start">
+                <span className="text-3xl font-black mb-1">التقارير</span>
+                <span className="text-slate-300 text-sm font-bold group-hover:text-white transition-colors">المخزون والخزنة وأداء فريق المبيعات</span>
+              </div>
+              <span className="text-5xl bg-white/10 w-16 h-16 flex items-center justify-center rounded-2xl">📊</span>
+            </Link>
+          </div>
+        ) : (
+          <div className="mt-4 pt-4 border-t-2 border-dashed">
             <h2 className="text-center font-bold text-gray-500 mb-4">أدوات فرز المخزون</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Link href="/sorting" className="bg-emerald-600 text-white p-6 rounded-2xl shadow-xl flex flex-col items-center gap-3 hover:bg-emerald-700 transition-all">
-                    <span className="text-4xl">📦</span>
-                    <span className="font-black">فرز المخزن (عام)</span>
-                    <span className="text-[10px] opacity-80 text-center">يعتمد على إيصالات الاستلام (للبضاعة الجاهزة)</span>
-                </Link>
+              <Link href="/sorting" className="bg-emerald-600 text-white p-6 rounded-2xl shadow-xl flex flex-col items-center gap-3 hover:bg-emerald-700 transition-all">
+                <span className="text-4xl">📦</span>
+                <span className="font-black">فرز المخزن (عام)</span>
+                <span className="text-[10px] opacity-80 text-center">يعتمد على إيصالات الاستلام (للبضاعة الجاهزة)</span>
+              </Link>
 
-                <Link href="/sorting-cut" className="bg-indigo-600 text-white p-6 rounded-2xl shadow-xl flex flex-col items-center gap-3 hover:bg-indigo-700 transition-all">
-                    <span className="text-4xl">✂️</span>
-                    <span className="font-black">فرز بالقص (دقيق)</span>
-                    <span className="text-[10px] opacity-80 text-center">يعتمد على رصيد الخامة والألوان الفعلي</span>
-                </Link>
+              <Link href="/sorting-cut" className="bg-indigo-600 text-white p-6 rounded-2xl shadow-xl flex flex-col items-center gap-3 hover:bg-indigo-700 transition-all">
+                <span className="text-4xl">✂️</span>
+                <span className="font-black">فرز بالقص (دقيق)</span>
+                <span className="text-[10px] opacity-80 text-center">يعتمد على رصيد الخامة والألوان الفعلي</span>
+              </Link>
             </div>
-        </div>
+          </div>
+        )}
 
       </div>
       

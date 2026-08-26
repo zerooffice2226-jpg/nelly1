@@ -81,34 +81,27 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      <div className="flex gap-2 mb-8 border-b border-gray-200 print:hidden overflow-x-auto pb-2 scrollbar-hide">
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8 print:hidden">
         <button 
             onClick={() => setActiveTab('INVENTORY')}
-            className={`px-10 py-5 font-black whitespace-nowrap transition-all rounded-t-3xl flex items-center gap-3 ${activeTab === 'INVENTORY' ? 'bg-white border-t-4 border-blue-600 text-blue-700 shadow-[0_-4px_15px_rgba(0,0,0,0.08)]' : 'bg-transparent text-gray-400 hover:text-gray-600'}`}
+            className={`p-6 font-black transition-all rounded-2xl flex flex-col items-center gap-3 border ${activeTab === 'INVENTORY' ? 'bg-blue-50 border-blue-500 text-blue-700 shadow-lg' : 'bg-white border-gray-100 text-gray-500 hover:border-blue-300 hover:text-blue-600'}`}
         >
             <span className="text-2xl">📦</span>
             المخزون وحركة الأصناف
         </button>
         <button 
             onClick={() => setActiveTab('SAFE')}
-            className={`px-10 py-5 font-black whitespace-nowrap transition-all rounded-t-3xl flex items-center gap-3 ${activeTab === 'SAFE' ? 'bg-white border-t-4 border-green-600 text-green-700 shadow-[0_-4px_15px_rgba(0,0,0,0.08)]' : 'bg-transparent text-gray-400 hover:text-gray-600'}`}
+            className={`p-6 font-black transition-all rounded-2xl flex flex-col items-center gap-3 border ${activeTab === 'SAFE' ? 'bg-green-50 border-green-500 text-green-700 shadow-lg' : 'bg-white border-gray-100 text-gray-500 hover:border-green-300 hover:text-green-600'}`}
         >
             <span className="text-2xl">💰</span>
-            دفتر أستاذ الخزينة
+            حركة الخزنة
         </button>
         <button 
             onClick={() => setActiveTab('EMPLOYEES')}
-            className={`px-10 py-5 font-black whitespace-nowrap transition-all rounded-t-3xl flex items-center gap-3 ${activeTab === 'EMPLOYEES' ? 'bg-white border-t-4 border-purple-600 text-purple-700 shadow-[0_-4px_15px_rgba(0,0,0,0.08)]' : 'bg-transparent text-gray-400 hover:text-gray-600'}`}
+            className={`p-6 font-black transition-all rounded-2xl flex flex-col items-center gap-3 border ${activeTab === 'EMPLOYEES' ? 'bg-purple-50 border-purple-500 text-purple-700 shadow-lg' : 'bg-white border-gray-100 text-gray-500 hover:border-purple-300 hover:text-purple-600'}`}
         >
             <span className="text-2xl">👥</span>
             أداء فريق المبيعات
-        </button>
-        <button 
-            onClick={() => setActiveTab('WAREHOUSE')}
-            className={`px-10 py-5 font-black whitespace-nowrap transition-all rounded-t-3xl flex items-center gap-3 ${activeTab === 'WAREHOUSE' ? 'bg-white border-t-4 border-amber-500 text-amber-600 shadow-[0_-4px_15px_rgba(0,0,0,0.08)]' : 'bg-transparent text-gray-400 hover:text-gray-600'}`}
-        >
-            <span className="text-2xl">🏭</span>
-            إيصالات المستودع
         </button>
       </div>
 
