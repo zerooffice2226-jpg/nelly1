@@ -257,10 +257,11 @@ function InventoryReportView() {
 
     const formatNumber = (value: number) => new Intl.NumberFormat('ar-EG').format(value || 0);
     const formatCurrency = (value: number) => `${formatNumber(value)} ج.م`;
+    const canViewTotals = userRole === 'ADMIN' || userRole === 'OWNER';
 
     return (
         <div className="space-y-8 print:space-y-0 print:mt-0">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 print:grid-cols-3 print:gap-3">
+            {canViewTotals && <div className="grid grid-cols-1 md:grid-cols-3 gap-4 print:grid-cols-3 print:gap-3">
                 <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5 shadow-sm">
                     <h2 className="text-lg font-black text-blue-900">إجمالي المخزون الأولي</h2>
                     <div className="mt-4 grid grid-cols-2 gap-3">
@@ -302,7 +303,7 @@ function InventoryReportView() {
                         </div>
                     </div>
                 </div>
-            </div>
+            </div>}
 
             <div className="flex flex-wrap gap-4 items-center justify-between print:hidden">
                 <div className="flex gap-2 items-center flex-1 min-w-[300px]">
