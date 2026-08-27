@@ -241,10 +241,12 @@ export default function EditOrderPage({ params }: { params: Promise<{ id: string
       cart.forEach(item => {
           if (item.type === 'discount') activeDiscount = item.percent;
           else {
-              const discountedPrice = item.unitPrice * (1 - activeDiscount / 100);
+              const productDiscount = item.variants[0]?.productDiscount || 0;
+              const appliedDiscount = activeDiscount > 0 ? activeDiscount : productDiscount;
+              const discountedPrice = item.unitPrice * (1 - appliedDiscount / 100);
               processed.push({
-                  ...item, appliedDiscount: activeDiscount, finalPrice: discountedPrice, totalLinePrice: item.variants.reduce((sum: number, v: any) => sum + (v.quantity * PIECES_PER_UNIT * discountedPrice), 0),
-                  variants: item.variants.map((v: any) => ({ ...v, price: discountedPrice, discountPercent: activeDiscount }))
+                  ...item, appliedDiscount, finalPrice: discountedPrice, totalLinePrice: item.variants.reduce((sum: number, v: any) => sum + (v.quantity * PIECES_PER_UNIT * discountedPrice), 0),
+                  variants: item.variants.map((v: any) => ({ ...v, price: discountedPrice, discountPercent: activeDiscount > 0 ? activeDiscount : (v.productDiscount || 0) }))
               });
           }
       });
