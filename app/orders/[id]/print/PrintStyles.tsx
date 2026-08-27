@@ -34,6 +34,28 @@ const PrintStyles = ({ siteName, customerName }: { siteName: string, customerNam
             color: #000000 !important;
         }
 
+        #invoice-content,
+        #invoice-content * {
+            color: #000000 !important;
+            font-weight: 600;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+        }
+
+        #invoice-content h1,
+        #invoice-content h2,
+        #invoice-content h3,
+        #invoice-content h4,
+        #invoice-content th,
+        #invoice-content strong,
+        #invoice-content b {
+            font-weight: 700;
+        }
+
+        #invoice-content .text-white {
+            color: #ffffff !important;
+        }
+
         .no-print {
             display: none !important;
         }

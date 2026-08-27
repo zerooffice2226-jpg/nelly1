@@ -323,7 +323,7 @@ export default function OrdersListPage() {
                         {order.isDeferredCustomer ? 'إلغاء التمييز' : 'تمييز كعميل آجل'}
                     </button>
 
-                    {(userRole === 'ADMIN' || userRole === 'OWNER') && (
+                    {['ADMIN', 'OWNER', 'ACCOUNTANT'].includes(userRole) && (
                         <button onClick={() => handleDelete(order.id)} className="w-full mt-2 text-red-500 text-xs font-bold py-2 border border-red-100 rounded hover:bg-red-50">
                             حذف الأوردر ❌
                         </button>

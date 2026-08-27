@@ -3,6 +3,8 @@
 import { PrismaClient } from '@prisma/client'
 import { revalidatePath } from 'next/cache'
 import bcrypt from 'bcryptjs'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/auth'
 
 const prisma = new PrismaClient()
 
@@ -370,6 +372,20 @@ export async function getOrderById(orderId: string) {
 
 export async function deleteOrder(orderId: string) {
     try {
+    const session = await getServerSession(authOptions)
+    const userId = session?.user?.image
+    if (!userId) {
+      return { success: false, error: 'غير مصرح لك بحذف الطلبات' }
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    })
+    if (!user || !['ADMIN', 'OWNER', 'ACCOUNTANT'].includes(user.role)) {
+      return { success: false, error: 'غير مصرح لك بحذف الطلبات' }
+    }
+
         await prisma.$transaction(async (tx) => {
             // Step 1: Check for fulfilled items
             const fulfilledItems = await tx.orderItem.findMany({
