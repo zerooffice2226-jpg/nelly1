@@ -239,28 +239,89 @@ export async function getWarehouseReport(startDate?: string, endDate?: string) {
   }
 }
 
+function normalizeHeader(value: unknown) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\u200c\u200b]/g, '')
+    .replace(/[\s_\-()]+/g, '');
+}
+
+function getRowValue(row: Record<string, any>, aliases: string[]) {
+  const keyMap = new Map<string, any>();
+
+  Object.entries(row ?? {}).forEach(([key, value]) => {
+    const normalized = normalizeHeader(key);
+    if (normalized) keyMap.set(normalized, value);
+  });
+
+  for (const alias of aliases) {
+    const normalizedAlias = normalizeHeader(alias);
+    const value = keyMap.get(normalizedAlias);
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+export async function clearWarehouseReceipts() {
+  try {
+    const result = await prisma.warehouseReceipt.deleteMany({});
+    return { success: true, deleted: result.count };
+  } catch (e) {
+    console.error(e);
+    return { success: false, error: 'فشل حذف جميع إيصالات المستودع' };
+  }
+}
+
 export async function bulkUploadWarehouseReceipts(receiptsData: any[]) {
   try {
     if (!Array.isArray(receiptsData) || receiptsData.length === 0) {
       return { success: false, error: 'لا توجد بيانات لإضافتها' };
     }
 
+    const plainRows = receiptsData.map((row) => {
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        return {};
+      }
+
+      const safeRow: Record<string, any> = {};
+      Object.entries(row).forEach(([key, value]) => {
+        if (key !== '__proto__' && key !== 'constructor' && key !== 'prototype') {
+          safeRow[String(key)] = value == null ? '' : value;
+        }
+      });
+
+      return JSON.parse(JSON.stringify(safeRow));
+    });
+
     let inserted = 0;
     let skipped = 0;
     const errors: string[] = [];
+    const seenUniqueIds = new Set<string>();
 
-    for (const row of receiptsData) {
-      const uniqueid = row.uniqueid || row.معرف;
-      const dateStr = row.date || row.التاريخ;
-      const empName = row.empName || row['emp name'] || row.الموظف || row['اسم الموظف'] || '';
-      const modelNo = row.modelNo || row['model no'] || row['كود الموديل'] || row.موديل;
-      const mostStr = row.most || row.الكمية;
-      const color = row.color || row.tadakhol || row.اللون || null;
+    for (const row of plainRows) {
+      const rawUniqueId = getRowValue(row, ['uniqueid', 'معرف', 'معرف فريد', 'معرف فريد (uniqueid)', 'معرف فريد (uniqueId)']);
+      const uniqueid = rawUniqueId == null ? '' : String(rawUniqueId).trim();
+      const dateStr = getRowValue(row, ['date', 'التاريخ', 'التاريخ (date)', 'تاريخ']);
+      const empName = getRowValue(row, ['empName', 'emp name', 'اسم الموظف', 'اسم الموظف (emp name)', 'الموظف']) ?? '';
+      const modelNo = getRowValue(row, ['modelNo', 'model no', 'كود الموديل', 'كود الموديل (model no)', 'موديل', 'model']);
+      const mostStr = getRowValue(row, ['most', 'الكمية', 'الكمية (most)', 'quantity', 'qty']);
+      const color = getRowValue(row, ['color', 'tadakhol', 'اللون', 'اللون (tadakhol)', 'التداخل']) ?? null;
 
       if (!uniqueid || !modelNo || !dateStr) {
         errors.push(`صف ناقص (معرف: ${uniqueid || '؟'}) - يجب توفر المعرف والتاريخ والموديل`);
         continue;
       }
+
+      if (seenUniqueIds.has(uniqueid)) {
+        skipped++;
+        errors.push(`معرف مكرر داخل الملف: ${uniqueid}`);
+        continue;
+      }
+      seenUniqueIds.add(uniqueid);
 
       const itemDate = new Date(dateStr);
       if (isNaN(itemDate.getTime())) {
@@ -275,18 +336,19 @@ export async function bulkUploadWarehouseReceipts(receiptsData: any[]) {
       }
 
       const existing = await prisma.warehouseReceipt.findUnique({
-        where: { uniqueid: String(uniqueid) }
+        where: { uniqueid }
       });
 
       if (existing) {
         skipped++;
+        errors.push(`معرف موجود مسبقاً في قاعدة البيانات: ${uniqueid}`);
         continue;
       }
 
       try {
         await prisma.warehouseReceipt.create({
           data: {
-            uniqueid: String(uniqueid),
+            uniqueid,
             date: itemDate,
             empName: String(empName || ''),
             modelNo: String(modelNo),

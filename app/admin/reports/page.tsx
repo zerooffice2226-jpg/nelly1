@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { getInventoryReport, getSafesList, getSafeLedger, getEmployeePerformance, getWarehouseReport, bulkUploadWarehouseReceipts } from '@/app/report-actions';
+import { getInventoryReport, getSafesList, getSafeLedger, getEmployeePerformance, getWarehouseReport, bulkUploadWarehouseReceipts, clearWarehouseReceipts } from '@/app/report-actions';
 import { useSession } from 'next-auth/react';
 import * as XLSX from 'xlsx';
 
@@ -258,6 +258,24 @@ function InventoryReportView() {
     const formatNumber = (value: number) => new Intl.NumberFormat('ar-EG').format(value || 0);
     const formatCurrency = (value: number) => `${formatNumber(value)} ج.م`;
     const canViewTotals = userRole === 'ADMIN' || userRole === 'OWNER';
+
+    useEffect(() => {
+        const handleDownload = () => {
+            const excelData = displayData.map((item: any) => ({
+                "كود الموديل": item.modelNo,
+                "الخامة": item.material || '-',
+                "اللون": viewMode === 'COLOR' ? (item.color || '-') : (item.colors?.map((c: any) => `${c.name} (${c.sold / 4} سرية)`).join(' | ') || '-'),
+                "المخزون الأولي": item.initialStock ?? 0,
+                "المباع (سرية)": item.totalSold ?? 0,
+                "المخزون الحالي": item.currentStock ?? 0,
+                "قيمة المخزون الحالي": item.currentValue ?? 0,
+            }));
+            exportToExcel(excelData, "Inventory_Stock_Report");
+        };
+
+        window.addEventListener('download-excel', handleDownload);
+        return () => window.removeEventListener('download-excel', handleDownload);
+    }, [displayData, viewMode]);
 
     return (
         <div className="space-y-8 print:space-y-0 print:mt-0">
@@ -764,8 +782,33 @@ function WarehouseReportView() {
     const [loading, setLoading] = useState(false);
     const [viewMode, setViewMode] = useState<'DETAIL' | 'MODEL' | 'EMPLOYEE'>('DETAIL');
     const [uploading, setUploading] = useState(false);
+    const [clearing, setClearing] = useState(false);
     const [uploadResult, setUploadResult] = useState<any>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const handleClearAllReceipts = async () => {
+        const confirmed = window.confirm('هل أنت متأكد؟ سيتم حذف جميع إيصالات المستودع الحالية قبل إعادة الرفع.');
+        if (!confirmed) return;
+
+        setClearing(true);
+        setUploadResult(null);
+
+        try {
+            const res = await clearWarehouseReceipts();
+            setUploadResult(res.success
+                ? { success: true, inserted: 0, skipped: 0, deleted: res.deleted, error: null }
+                : { success: false, error: res.error || 'فشل حذف البيانات' }
+            );
+
+            if (res.success) {
+                fetchReport();
+            }
+        } catch (err: any) {
+            setUploadResult({ success: false, error: 'فشل حذف جميع البيانات: ' + (err.message || err) });
+        }
+
+        setClearing(false);
+    };
 
     const downloadTemplate = () => {
         const template = [
@@ -796,9 +839,10 @@ function WarehouseReportView() {
             const buffer = await file.arrayBuffer();
             const workbook = XLSX.read(buffer, { type: 'array' });
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
-            const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+            const rows = (XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false }) as Record<string, any>[])
+              .map((row) => JSON.parse(JSON.stringify(row)));
 
-            const res = await bulkUploadWarehouseReceipts(rows as any[]);
+            const res = await bulkUploadWarehouseReceipts(rows);
             setUploadResult(res);
             if (res.success) {
                 fetchReport();
@@ -884,6 +928,13 @@ function WarehouseReportView() {
                     className={`bg-amber-500 text-white px-6 py-3 rounded-xl font-black shadow-lg transition-all flex items-center gap-2 ${uploading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-amber-600'}`}
                 >
                     <span>{uploading ? '⏳ جاري الرفع...' : '⬆️ رفع ملف Excel'}</span>
+                </button>
+                <button
+                    onClick={handleClearAllReceipts}
+                    disabled={clearing || uploading}
+                    className={`bg-red-600 text-white px-6 py-3 rounded-xl font-black shadow-lg transition-all flex items-center gap-2 ${clearing || uploading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-700'}`}
+                >
+                    <span>{clearing ? '⏳ جاري الحذف...' : '🗑️ حذف الجميع'}</span>
                 </button>
                 <input
                     ref={fileInputRef}
