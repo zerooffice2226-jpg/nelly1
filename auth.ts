@@ -9,7 +9,7 @@ export const authOptions: NextAuthOptions = {
   session: {
     strategy: "jwt",
   },
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: process.env.NEXTAUTH_SECRET ?? "my_super_secret_key_123456789_any_r",
   pages: {
     signIn: "/login",
   },

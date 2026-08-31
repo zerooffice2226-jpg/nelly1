@@ -16,37 +16,129 @@ const exportToExcel = (data: any[], fileName: string) => {
     XLSX.writeFile(workbook, `${fileName}_${new Date().toISOString().split('T')[0]}.xlsx`);
 };
 
+const PRINT_STYLES = `
+  @media print {
+    @page {
+      size: A4 portrait;
+      margin: 10mm 8mm 10mm 8mm;
+    }
+
+    html, body, #__next, main {
+      height: auto !important;
+      min-height: 0 !important;
+      background: white !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      font-size: 18px !important;
+    }
+
+    body {
+      overflow: visible !important;
+      background: white !important;
+    }
+
+    body * {
+      visibility: hidden !important;
+    }
+
+    .print\:hidden,
+    .report-controls,
+    .report-mode-switch,
+    .report-summary,
+    .report-table-desktop,
+    .report-table-mobile,
+    nav,
+    aside,
+    header,
+    footer,
+    .no-print {
+      display: none !important;
+    }
+
+    #inventory-print-root,
+    #inventory-print-root * {
+      visibility: visible !important;
+    }
+
+    #inventory-print-root {
+      position: relative !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      width: 100% !important;
+      display: block !important;
+      background: white !important;
+      padding: 0 !important;
+      margin: 0 !important;
+    }
+
+    #inventory-print-root table {
+      display: table !important;
+      width: 100% !important;
+      border-collapse: collapse !important;
+      table-layout: fixed !important;
+      font-size: 18px !important;
+    }
+
+    #inventory-print-root thead th,
+    #inventory-print-root tbody td {
+      font-size: 16px !important;
+      padding: 8px 6px !important;
+      border: 1px solid #111827 !important;
+      text-align: center !important;
+      vertical-align: middle !important;
+      word-break: break-word !important;
+    }
+
+    #inventory-print-root thead {
+      background: #020617 !important;
+      color: white !important;
+    }
+
+    #inventory-print-root thead th {
+      font-weight: 900 !important;
+      font-size: 17px !important;
+    }
+
+    #inventory-print-root tbody tr:nth-child(even) {
+      background: #f8fafc !important;
+    }
+
+    .required-cut-input,
+    .required-cut-button,
+    .required-cut-controls {
+      display: none !important;
+    }
+
+    * {
+      box-shadow: none !important;
+    }
+  }
+`;
 
 export default function ReportsPage() {
   const [activeTab, setActiveTab] = useState<'INVENTORY' | 'SAFE' | 'EMPLOYEES' | 'WAREHOUSE'>('INVENTORY');
+  const [printMode, setPrintMode] = useState<'TABLE' | 'CARD'>('TABLE');
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  const handlePrintReport = (mode: 'TABLE' | 'CARD') => {
+    const printableArea = document.getElementById('printable-area');
+    const normalizedMode = mode.toLowerCase();
+    if (printableArea) {
+      printableArea.setAttribute('data-print-mode', normalizedMode);
+      printableArea.scrollIntoView({ behavior: 'instant' as ScrollBehavior, block: 'start' });
+    }
+    setPrintMode(mode);
+    setTimeout(() => window.print(), 150);
+  };
   
   return (
     <div className="min-h-screen print:min-h-0 bg-gray-50 p-4 md:p-6 print:p-0 print:bg-white" dir="rtl">
-        <style jsx global>{`
-        @media print {
-          /* تصغير الهوامش الرسمية للورقة */
-          @page { margin: 5mm; }
-          
-          /* تصفير أي ارتفاعات وهمية تسبب الصفحة الفارغة */
-          html, body, #__next, main {
-            height: max-content !important;
-            min-height: 0 !important;
-            background: white !important;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-
-          /* إخفاء نهائي للعناصر غير المرغوبة بدون ترك مساحة فارغة */
-          nav, aside, header, footer, .print\:hidden { 
-            display: none !important; 
-          }
-
-          /* إزالة الظلال والحدود الدائرية في الطباعة لتوفير المساحة */
-          * {
-            box-shadow: none !important;
-          }
-        }
-      `}</style>
+      {isMounted && <style>{PRINT_STYLES}</style>}
 
     <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-5 sm:mb-8 bg-white p-4 sm:p-6 rounded-2xl shadow-sm border border-gray-100 print:hidden">
         <div className="flex items-center gap-4">
@@ -72,11 +164,19 @@ export default function ReportsPage() {
             </button>
 
             <button 
-              onClick={() => window.print()} 
-              className="flex-1 md:flex-none bg-slate-900 text-white px-3 sm:px-10 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black shadow-xl hover:bg-black transition-all transform active:scale-95 flex items-center justify-center gap-2 sm:gap-3 text-xs sm:text-base"
+              onClick={() => handlePrintReport('TABLE')}
+              className="flex-1 md:flex-none bg-slate-900 text-white px-3 sm:px-8 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black shadow-xl hover:bg-black transition-all transform active:scale-95 flex items-center justify-center gap-2 sm:gap-3 text-xs sm:text-base"
             >
                 <span className="text-xl">🖨️</span>
-                <span>طباعة التقرير</span>
+                <span>طباعة جدول</span>
+            </button>
+
+            <button 
+              onClick={() => handlePrintReport('CARD')}
+              className="flex-1 md:flex-none bg-fuchsia-700 text-white px-3 sm:px-8 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black shadow-xl hover:bg-fuchsia-800 transition-all transform active:scale-95 flex items-center justify-center gap-2 sm:gap-3 text-xs sm:text-base"
+            >
+                <span className="text-xl">📋</span>
+                <span>طباعة كروت</span>
             </button>
         </div>
       </div>
@@ -112,8 +212,8 @@ export default function ReportsPage() {
         </button>
       </div>
 
-      <div id="printable-area" className="bg-white p-4 md:p-10 rounded-[2.5rem] shadow-sm border border-gray-50 print:min-h-0 print:border-none print:shadow-none print:p-0">
-          {activeTab === 'INVENTORY' && <InventoryReportView />}
+      <div id="printable-area" data-print-mode={printMode.toLowerCase()} className="bg-white p-4 md:p-10 rounded-[2.5rem] shadow-sm border border-gray-50 print:min-h-0 print:border-none print:shadow-none print:p-0">
+          {activeTab === 'INVENTORY' && <InventoryReportView printMode={printMode} />}
           {activeTab === 'SAFE' && <SafeLedgerView />}
           {activeTab === 'EMPLOYEES' && <EmployeePerformanceView />}
           {activeTab === 'WAREHOUSE' && <WarehouseReportView />}
@@ -122,7 +222,7 @@ export default function ReportsPage() {
   );
 }
 
-function InventoryReportView() {
+function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
     const { data: session } = useSession();
     const userRole = session?.user?.role;
 
@@ -132,9 +232,13 @@ function InventoryReportView() {
     const [viewMode, setViewMode] = useState<'COLOR' | 'MODEL'>('COLOR');
     const [showInitialStock, setShowInitialStock] = useState(true);
     const [showCurrentStock, setShowCurrentStock] = useState(true);
+    const [showSold, setShowSold] = useState(true);
+    const [bulkCutAmount, setBulkCutAmount] = useState(1);
     const [isLinkedStagesActive, setIsLinkedStagesActive] = useState(false);
     const [selectedHistory, setSelectedHistory] = useState<any[] | null>(null);
     const [selectedItemName, setSelectedItemName] = useState('');
+    const [cutInputs, setCutInputs] = useState<Record<string, number>>({});
+    const [requiredCuts, setRequiredCuts] = useState<Record<string, number>>({});
     // الترتيب الافتراضي أصبح بكود الموديل تصاعدياً
     const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>({ key: 'modelNo', direction: 'asc' });
 
@@ -259,6 +363,58 @@ function InventoryReportView() {
     const formatCurrency = (value: number) => `${formatNumber(value)} ج.م`;
     const canViewTotals = userRole === 'ADMIN' || userRole === 'OWNER';
 
+    const getItemKey = (item: any) => viewMode === 'COLOR' ? `${item.modelNo}-${item.color || 'group'}` : `${item.modelNo}-${item.material || 'material'}`;
+    const getSoldUnits = (item: any) => Number(item.totalSold || 0) / 4;
+
+    const getRequiredCut = (item: any) => {
+        const key = getItemKey(item);
+        const soldUnits = getSoldUnits(item);
+        const value = requiredCuts[key];
+        return Number.isFinite(value) ? value : soldUnits;
+    };
+
+    const handleCutInputChange = (item: any, rawValue: string) => {
+        const key = getItemKey(item);
+        const nextValue = Number(rawValue);
+        setCutInputs(prev => ({
+            ...prev,
+            [key]: Number.isFinite(nextValue) ? Math.max(0, nextValue) : 0
+        }));
+    };
+
+    const handleAddCut = (item: any) => {
+        const key = getItemKey(item);
+        const amount = Number(cutInputs[key] ?? 0);
+        const currentRequired = getRequiredCut(item);
+
+        setRequiredCuts(prev => ({
+            ...prev,
+            [key]: currentRequired + (Number.isFinite(amount) ? Math.max(0, amount) : 0)
+        }));
+
+        setCutInputs(prev => ({
+            ...prev,
+            [key]: 0
+        }));
+    };
+
+    const handleBulkAddCut = () => {
+        const amount = Number(bulkCutAmount) || 0;
+        if (amount <= 0) return;
+
+        const nextRequiredCuts = { ...requiredCuts };
+
+        displayData.forEach((item: any) => {
+            const key = getItemKey(item);
+            const currentRequired = getRequiredCut(item);
+            if (currentRequired > 0) {
+                nextRequiredCuts[key] = currentRequired + amount;
+            }
+        });
+
+        setRequiredCuts(nextRequiredCuts);
+    };
+
     useEffect(() => {
         const handleDownload = () => {
             const excelData = displayData.map((item: any) => ({
@@ -279,7 +435,7 @@ function InventoryReportView() {
 
     return (
         <div className="space-y-8 print:space-y-0 print:mt-0">
-            {canViewTotals && <div className="grid grid-cols-1 md:grid-cols-3 gap-4 print:grid-cols-3 print:gap-3">
+            {canViewTotals && <div className="report-summary grid grid-cols-1 md:grid-cols-3 gap-4 print:grid-cols-3 print:gap-3">
                 <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5 shadow-sm">
                     <h2 className="text-lg font-black text-blue-900">إجمالي المخزون الأولي</h2>
                     <div className="mt-4 grid grid-cols-2 gap-3">
@@ -323,7 +479,47 @@ function InventoryReportView() {
                 </div>
             </div>}
 
-            <div className="flex flex-wrap gap-4 items-center justify-between print:hidden">
+            <div id="inventory-print-root" className="hidden print:block">
+                <div className="mb-6 border-b border-slate-200 pb-3">
+                    <h2 className="text-2xl font-black text-slate-900">تقرير المخزون</h2>
+                    <p className="mt-1 text-xs font-bold text-slate-500">نتيجة الفلتر الحالي</p>
+                </div>
+
+                <table className="w-full border-collapse text-right">
+                    <thead className="bg-slate-950 text-white">
+                        <tr>
+                            <th className="p-3 text-xs">كود الموديل</th>
+                            <th className="p-3 text-xs">الخامة</th>
+                            <th className="p-3 text-xs">{viewMode === 'COLOR' ? 'اللون' : 'الألوان'}</th>
+                            {showInitialStock && <th className="p-3 text-xs">أولي</th>}
+                            {showSold && <th className="p-3 text-xs">مباع</th>}
+                            <th className="p-3 text-xs">المطلوب قصه</th>
+                            {showCurrentStock && <th className="p-3 text-xs">حالي</th>}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {displayData.map((item: any) => {
+                            const requiredCut = getRequiredCut(item);
+                            const soldUnits = getSoldUnits(item);
+                            return (
+                                <tr key={getItemKey(item)} className="bg-white even:bg-slate-50">
+                                    <td className="p-3 text-sm font-black">{item.modelNo}</td>
+                                    <td className="p-3 text-sm">{item.material || '-'}</td>
+                                    <td className="p-3 text-sm">
+                                        {viewMode === 'COLOR' ? (item.color || '-') : (item.colors?.map((c: any) => `${c.name} (${c.sold / 4})`).join(' / ') || '-')}
+                                    </td>
+                                    {showInitialStock && <td className="p-3 text-sm">{item.initialStock ?? 0}</td>}
+                                    {showSold && <td className="p-3 text-sm">{item.totalSold ?? 0} / {soldUnits}</td>}
+                                    <td className="p-3 text-sm font-black text-indigo-700">{requiredCut}</td>
+                                    {showCurrentStock && <td className="p-3 text-sm font-black text-green-700">{item.currentStock ?? 0}</td>}
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+
+            <div className="report-controls flex flex-wrap gap-4 items-center justify-between print:hidden">
                 <div className="flex gap-2 items-center flex-1 min-w-[300px]">
                     <input 
                         type="text" placeholder="ابحث بالموديل أو الخامة..." 
@@ -338,7 +534,24 @@ function InventoryReportView() {
                     </button>
                 </div>
 
-                <div className="bg-gray-100 p-2 rounded-2xl flex flex-wrap gap-2 items-center shadow-inner print:hidden">
+                <div className="flex flex-wrap items-center gap-2 bg-indigo-50 border border-indigo-100 rounded-2xl p-2 shadow-inner">
+                    <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={bulkCutAmount}
+                        onChange={(e) => setBulkCutAmount(Math.max(1, Number(e.target.value) || 1))}
+                        className="w-20 border border-indigo-200 rounded-xl px-2 py-3 text-center font-black text-indigo-700 outline-none"
+                    />
+                    <button
+                        onClick={handleBulkAddCut}
+                        className="bg-indigo-600 text-white px-4 py-3 rounded-xl font-black shadow hover:bg-indigo-700 transition-all"
+                    >
+                        + قص لكل السجلات
+                    </button>
+                </div>
+
+                <div className="bg-gray-100 p-2 rounded-2xl flex flex-wrap gap-2 items-center shadow-inner print:hidden report-mode-switch">
                     <button onClick={() => setViewMode('COLOR')} className={`px-6 py-3 rounded-xl ${viewMode === 'COLOR' ? 'bg-white shadow text-blue-700 font-bold' : ''}`}>الألوان</button>
                     <button onClick={() => setViewMode('MODEL')} className={`px-6 py-3 rounded-xl ${viewMode === 'MODEL' ? 'bg-white shadow text-blue-700 font-bold' : ''}`}>الموديلات</button>
                     <button onClick={() => setShowInitialStock(!showInitialStock)} className={`px-4 py-3 rounded-xl text-xs font-black border transition-all ${showInitialStock ? 'bg-white shadow text-blue-700 border-blue-100' : 'bg-transparent text-gray-400 border-transparent'}`}>
@@ -347,10 +560,13 @@ function InventoryReportView() {
                     <button onClick={() => setShowCurrentStock(!showCurrentStock)} className={`px-4 py-3 rounded-xl text-xs font-black border transition-all ${showCurrentStock ? 'bg-white shadow text-blue-700 border-blue-100' : 'bg-transparent text-gray-400 border-transparent'}`}>
                         {showCurrentStock ? '👁️ إخفاء الحالي' : '🙈 إظهار الحالي'}
                     </button>
+                    <button onClick={() => setShowSold(!showSold)} className={`px-4 py-3 rounded-xl text-xs font-black border transition-all ${showSold ? 'bg-white shadow text-yellow-700 border-yellow-100' : 'bg-transparent text-gray-400 border-transparent'}`}>
+                        {showSold ? '👁️ إخفاء المباع' : '🙈 إظهار المباع'}
+                    </button>
                 </div>
             </div>
 
-            <div className="hidden md:block overflow-x-auto rounded-[2rem] border border-gray-100">
+            <div className={`report-table-desktop ${printMode === 'CARD' ? 'hidden' : 'hidden md:block'} overflow-x-auto rounded-[2rem] border border-gray-100`}>
                 <table className="w-full text-right border-collapse">
                     <thead className="bg-slate-900 text-white text-[10px] uppercase tracking-widest">
                         <tr>
@@ -363,12 +579,13 @@ function InventoryReportView() {
                             <th className="p-5">الخامة</th>
                             <th className="p-5">{viewMode === 'COLOR' ? 'اللون' : 'الألوان'}</th>
                             {showInitialStock && <th className="p-5">أولي (قطعة)</th>}
-                            <th 
+                            {showSold && <th 
                                 className="p-5 text-yellow-500 cursor-pointer hover:bg-slate-800 transition-colors select-none"
                                 onClick={() => handleSort('totalSold')}
                             >
                                 المباع (سرية) {sortConfig?.key === 'totalSold' && (sortConfig.direction === 'asc' ? ' ↑' : ' ↓')}
-                            </th>
+                            </th>}
+                            <th className="p-5 text-indigo-200">المطلوب قصه</th>
                             {showCurrentStock && 
                                 <th 
                                     className="p-5 cursor-pointer hover:bg-slate-800 transition-colors select-none"
@@ -380,88 +597,140 @@ function InventoryReportView() {
                         </tr>
                     </thead>
                     <tbody>
-                        {displayData.map((item: any) => (
-                            <tr key={item.id + item.color} className="border-b hover:bg-gray-50 transition-colors">
-                                <td className="p-5 font-black text-xl">{item.modelNo}</td>
-                                <td className="p-5 text-gray-400 font-bold text-sm">{item.material || '-'}</td>
-                                <td className="p-5">
-                                    {viewMode === 'COLOR' ? (
-                                        <span className="font-bold text-gray-600">{item.color}</span>
-                                    ) : (
-                                        <div className="flex flex-wrap gap-1.5">
-                                            {item.colors.map((c:any, i:number) => (
-                                                <div key={i} className="bg-gray-50 border px-2 py-1 rounded-lg text-[10px] font-bold">
-                                                    {c.name} ({c.sold/4} سرية)
-                                                </div>
-                                            ))}
+                        {displayData.map((item: any) => {
+                            const key = getItemKey(item);
+                            const soldUnits = getSoldUnits(item);
+                            const requiredCut = getRequiredCut(item);
+                            const inputValue = cutInputs[key] ?? soldUnits;
+
+                            return (
+                                <tr key={key} className="border-b hover:bg-gray-50 transition-colors">
+                                    <td className="p-5 font-black text-xl">{item.modelNo}</td>
+                                    <td className="p-5 text-gray-400 font-bold text-sm">{item.material || '-'}</td>
+                                    <td className="p-5">
+                                        {viewMode === 'COLOR' ? (
+                                            <span className="font-bold text-gray-600">{item.color}</span>
+                                        ) : (
+                                            <div className="flex flex-wrap gap-1.5">
+                                                {item.colors.map((c:any, i:number) => (
+                                                    <div key={i} className="bg-gray-50 border px-2 py-1 rounded-lg text-[10px] font-bold">
+                                                        {c.name} ({c.sold/4} سرية)
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </td>
+                                    {showInitialStock && <td className="p-5 font-bold text-gray-400">{item.initialStock}</td>}
+                                    {showSold && <td className="p-5 text-yellow-600 font-black text-lg">
+                                        {item.totalSold > 0 ? (
+                                            <button 
+                                                onClick={() => openHistory(item)} 
+                                                className="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-1 rounded-xl shadow-lg transition-all active:scale-95 flex flex-col items-center"
+                                                title="اضغط لعرض تفاصيل البيع بالقطع"
+                                            >
+                                                <span className="text-lg leading-none">{soldUnits}</span>
+                                                <span className="text-[9px] font-bold">سرية</span>
+                                            </button>
+                                        ) : (
+                                            <span className="text-gray-300">0</span>
+                                        )}
+                                    </td>}
+                                    <td className="required-cut-cell p-5">
+                                        <div className="required-cut-controls flex items-center gap-2">
+                                            <span className="required-cut-value min-w-[72px] rounded-xl bg-indigo-50 px-3 py-2 text-center font-black text-indigo-700">{requiredCut}</span>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                step={1}
+                                                value={inputValue}
+                                                onChange={(e) => handleCutInputChange(item, e.target.value)}
+                                                placeholder="إضافة"
+                                                className="required-cut-input w-20 border border-indigo-200 rounded-xl px-2 py-2 text-center font-black text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-200"
+                                            />
+                                            <button
+                                                onClick={() => handleAddCut(item)}
+                                                className="required-cut-button bg-indigo-600 text-white px-3 py-2 rounded-xl font-black shadow hover:bg-indigo-700 transition-all"
+                                            >
+                                                + قص
+                                            </button>
                                         </div>
-                                    )}
-                                </td>
-                                {showInitialStock && <td className="p-5 font-bold text-gray-400">{item.initialStock}</td>}
-                                <td className="p-5 text-yellow-600 font-black text-lg">
-                                    {item.totalSold > 0 ? (
-                                        <button 
-                                            onClick={() => openHistory(item)} 
-                                            className="bg-yellow-500 hover:bg-yellow-600 text-white px-3 py-1 rounded-xl shadow-lg transition-all active:scale-95 flex flex-col items-center"
-                                            title="اضغط لعرض تفاصيل البيع بالقطع"
-                                        >
-                                            <span className="text-lg leading-none">{item.totalSold / 4}</span>
-                                            <span className="text-[9px] font-bold">سرية</span>
-                                        </button>
-                                    ) : (
-                                        <span className="text-gray-300">0</span>
-                                    )}
-                                </td>
-                                {showCurrentStock && <td className={`p-5 font-black text-xl ${item.currentStock < 0 ? 'text-red-500' : 'text-green-600'}`}>{item.currentStock}</td>}
-                            </tr>
-                        ))}
+                                    </td>
+                                    {showCurrentStock && <td className={`p-5 font-black text-xl ${item.currentStock < 0 ? 'text-red-500' : 'text-green-600'}`}>{item.currentStock}</td>}
+                                </tr>
+                            );
+                        })}
                     </tbody>
                 </table>
             </div>
 
-            <div className="grid gap-3 md:hidden">
-                {displayData.map((item: any) => (
-                    <article key={item.id + item.color} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                        <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
-                            <div>
-                                <h3 className="text-xl font-black text-slate-900">{item.modelNo}</h3>
-                                <p className="mt-1 text-xs font-bold text-slate-400">{item.material || 'بدون خامة'}</p>
+            <div className={`report-table-mobile ${printMode === 'TABLE' ? 'hidden' : 'grid'} gap-3 md:hidden`}>
+                {displayData.map((item: any) => {
+                    const key = getItemKey(item);
+                    const soldUnits = getSoldUnits(item);
+                    const requiredCut = getRequiredCut(item);
+                    const inputValue = cutInputs[key] ?? soldUnits;
+
+                    return (
+                        <article key={key} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                                <div>
+                                    <h3 className="text-xl font-black text-slate-900">{item.modelNo}</h3>
+                                    <p className="mt-1 text-xs font-bold text-slate-400">{item.material || 'بدون خامة'}</p>
+                                </div>
+                                {viewMode === 'COLOR' ? (
+                                    <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">{item.color}</span>
+                                ) : (
+                                    <span className="text-left text-[10px] font-bold text-slate-500">{item.colors.length} ألوان</span>
+                                )}
                             </div>
-                            {viewMode === 'COLOR' ? (
-                                <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">{item.color}</span>
-                            ) : (
-                                <span className="text-left text-[10px] font-bold text-slate-500">{item.colors.length} ألوان</span>
-                            )}
-                        </div>
-                        {viewMode === 'MODEL' && (
-                            <div className="mt-3 flex flex-wrap gap-1.5">
-                                {item.colors.map((color: any, index: number) => (
-                                    <span key={index} className="rounded-md border bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-600">
-                                        {color.name} ({color.sold / 4} سرية)
-                                    </span>
-                                ))}
-                            </div>
-                        )}
-                        <div className="mt-3 grid grid-cols-2 gap-2 text-center">
-                            {showInitialStock && (
-                                <div className="rounded-xl bg-blue-50 p-2">
-                                    <div className="text-[10px] font-bold text-blue-500">المخزون الأولي</div>
-                                    <div className="mt-1 text-lg font-black text-blue-800">{item.initialStock}</div>
+                            {viewMode === 'MODEL' && (
+                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                    {item.colors.map((color: any, index: number) => (
+                                        <span key={index} className="rounded-md border bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-600">
+                                            {color.name} ({color.sold / 4} سرية)
+                                        </span>
+                                    ))}
                                 </div>
                             )}
-                            <button onClick={() => item.totalSold > 0 && openHistory(item)} className="rounded-xl bg-amber-50 p-2 text-amber-700 disabled:cursor-default" disabled={item.totalSold <= 0}>
-                                <div className="text-[10px] font-bold text-amber-600">المباع بالسرية</div>
-                                <div className="mt-1 text-lg font-black">{item.totalSold > 0 ? item.totalSold / 4 : 0}</div>
-                            </button>
-                            {showCurrentStock && (
-                                <div className="rounded-xl bg-emerald-50 p-2">
-                                    <div className="text-[10px] font-bold text-emerald-600">المخزون الحالي</div>
-                                    <div className={`mt-1 text-lg font-black ${item.currentStock < 0 ? 'text-red-500' : 'text-emerald-700'}`}>{item.currentStock}</div>
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-center">
+                                {showInitialStock && (
+                                    <div className="rounded-xl bg-blue-50 p-2">
+                                        <div className="text-[10px] font-bold text-blue-500">المخزون الأولي</div>
+                                        <div className="mt-1 text-lg font-black text-blue-800">{item.initialStock}</div>
+                                    </div>
+                                )}
+                                {showSold && <button onClick={() => item.totalSold > 0 && openHistory(item)} className="rounded-xl bg-amber-50 p-2 text-amber-700 disabled:cursor-default" disabled={item.totalSold <= 0}>
+                                    <div className="text-[10px] font-bold text-amber-600">المباع بالسرية</div>
+                                    <div className="mt-1 text-lg font-black">{item.totalSold > 0 ? soldUnits : 0}</div>
+                                </button>}
+                                {showCurrentStock && (
+                                    <div className="rounded-xl bg-emerald-50 p-2">
+                                        <div className="text-[10px] font-bold text-emerald-600">المخزون الحالي</div>
+                                        <div className={`mt-1 text-lg font-black ${item.currentStock < 0 ? 'text-red-500' : 'text-emerald-700'}`}>{item.currentStock}</div>
+                                    </div>
+                                )}
+                            </div>
+                            <div className="mt-4 rounded-xl bg-indigo-50 p-3">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="text-[10px] font-black text-indigo-700">المطلوب قصه</div>
+                                    <span className="rounded-lg bg-white px-2 py-1 text-sm font-black text-indigo-700">{requiredCut}</span>
                                 </div>
-                            )}
-                        </div>
-                    </article>
-                ))}
+                                <div className="mt-2 flex gap-2">
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        step={1}
+                                        value={inputValue}
+                                        onChange={(e) => handleCutInputChange(item, e.target.value)}
+                                        placeholder="إضافة"
+                                        className="required-cut-input w-20 flex-1 border border-indigo-200 rounded-lg px-2 py-2 text-center font-black text-indigo-700 outline-none"
+                                    />
+                                    <button onClick={() => handleAddCut(item)} className="required-cut-button bg-indigo-600 text-white px-3 py-2 rounded-lg font-black">+ قص</button>
+                                </div>
+                            </div>
+                        </article>
+                    );
+                })}
             </div>
 
             {selectedHistory && (
