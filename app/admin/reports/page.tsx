@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { getInventoryReport, getSafesList, getSafeLedger, getEmployeePerformance, getWarehouseReport, bulkUploadWarehouseReceipts, clearWarehouseReceipts } from '@/app/report-actions';
 import { useSession } from 'next-auth/react';
 import * as XLSX from 'xlsx';
@@ -1048,12 +1048,55 @@ function WarehouseReportView() {
     const [byModel, setByModel] = useState<any[]>([]);
     const [byEmployee, setByEmployee] = useState<any[]>([]);
     const [summary, setSummary] = useState<any>({});
+    const [itemSearch, setItemSearch] = useState('');
     const [loading, setLoading] = useState(false);
     const [viewMode, setViewMode] = useState<'DETAIL' | 'MODEL' | 'EMPLOYEE'>('DETAIL');
     const [uploading, setUploading] = useState(false);
     const [clearing, setClearing] = useState(false);
     const [uploadResult, setUploadResult] = useState<any>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    const normalizedItemSearch = itemSearch.trim().toLowerCase();
+    const filteredDetail = useMemo(() => {
+        if (!normalizedItemSearch) return detail;
+
+        return detail.filter((row: any) => {
+            const haystack = [row.modelNo, row.color, row.empName].filter(Boolean).join(' ').toLowerCase();
+            return haystack.includes(normalizedItemSearch);
+        });
+    }, [detail, normalizedItemSearch]);
+
+    const filteredByModel = useMemo(() => {
+        if (!normalizedItemSearch) return byModel;
+
+        const modelMatches = new Set(filteredDetail.map((row: any) => String(row.modelNo ?? '')));
+        return byModel.filter((row: any) => modelMatches.has(String(row.modelNo ?? '')));
+    }, [byModel, filteredDetail, normalizedItemSearch]);
+
+    const filteredByEmployee = useMemo(() => {
+        if (!normalizedItemSearch) return byEmployee;
+
+        const employeeMatches = new Set(filteredDetail.map((row: any) => String(row.empName ?? '')));
+        return byEmployee.filter((row: any) => employeeMatches.has(String(row.empName ?? '')));
+    }, [byEmployee, filteredDetail, normalizedItemSearch]);
+
+    const filteredSummary = useMemo(() => {
+        if (!normalizedItemSearch) return summary;
+
+        const totalReceipts = filteredDetail.length;
+        const totalQuantity = filteredDetail.reduce((acc, row: any) => acc + (Number(row.most) || 0), 0);
+        const uniqueModels = new Set(filteredDetail.map((row: any) => String(row.modelNo ?? ''))).size;
+        const uniqueEmployees = new Set(filteredDetail.map((row: any) => String(row.empName ?? ''))).size;
+
+        return {
+            totalReceipts,
+            totalQuantity,
+            uniqueModels,
+            uniqueEmployees,
+        };
+    }, [filteredDetail, normalizedItemSearch, summary]);
+
+    const visibleSummary = filteredSummary || summary;
 
     const handleClearAllReceipts = async () => {
         const confirmed = window.confirm('هل أنت متأكد؟ سيتم حذف جميع إيصالات المستودع الحالية قبل إعادة الرفع.');
@@ -1143,7 +1186,7 @@ function WarehouseReportView() {
 
     useEffect(() => {
         const handleDownload = () => {
-            const excelData = detail.map(row => ({
+            const excelData = filteredDetail.map(row => ({
                 "التاريخ": new Date(row.date).toLocaleDateString('ar-EG'),
                 "اسم الموظف": row.empName,
                 "كود الموديل": row.modelNo,
@@ -1155,13 +1198,13 @@ function WarehouseReportView() {
         };
         window.addEventListener('download-excel', handleDownload);
         return () => window.removeEventListener('download-excel', handleDownload);
-    }, [detail]);
+    }, [filteredDetail]);
 
     const summaryCards = [
-        { label: 'إجمالي الإيصالات', value: summary.totalReceipts, color: 'bg-blue-600', icon: '🧾' },
-        { label: 'إجمالي الكمية', value: summary.totalQuantity, color: 'bg-amber-500', icon: '📦' },
-        { label: 'عدد الموديلات', value: summary.uniqueModels, color: 'bg-emerald-600', icon: '🏷️' },
-        { label: 'عدد الموظفين', value: summary.uniqueEmployees, color: 'bg-purple-600', icon: '👷' },
+        { label: 'إجمالي الإيصالات', value: visibleSummary.totalReceipts, color: 'bg-blue-600', icon: '🧾' },
+        { label: 'إجمالي الكمية', value: visibleSummary.totalQuantity, color: 'bg-amber-500', icon: '📦' },
+        { label: 'عدد الموديلات', value: visibleSummary.uniqueModels, color: 'bg-emerald-600', icon: '🏷️' },
+        { label: 'عدد الموظفين', value: visibleSummary.uniqueEmployees, color: 'bg-purple-600', icon: '👷' },
     ];
 
     return (
@@ -1176,6 +1219,28 @@ function WarehouseReportView() {
                 <div className="w-full sm:w-auto">
                     <label className="block text-[10px] font-black mb-3 text-amber-600 uppercase tracking-[0.2em]">الفترة إلى</label>
                     <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full p-4 bg-white border border-amber-200 rounded-[1.2rem] shadow-sm font-bold" />
+                </div>
+                <div className="flex-1 min-w-[260px]">
+                    <label className="block text-[10px] font-black mb-3 text-amber-600 uppercase tracking-[0.2em]">بحث بالصنف / كود الموديل</label>
+                    <div className="relative">
+                        <input
+                            type="text"
+                            value={itemSearch}
+                            onChange={e => setItemSearch(e.target.value)}
+                            placeholder="اكتب اسم أو كود الصنف..."
+                            className="w-full p-4 bg-white border border-amber-200 rounded-[1.2rem] shadow-sm font-bold pr-12"
+                        />
+                        {itemSearch && (
+                            <button
+                                type="button"
+                                onClick={() => setItemSearch('')}
+                                className="absolute left-4 top-1/2 -translate-y-1/2 text-xs font-black text-amber-700 hover:text-amber-900"
+                                aria-label="مسح البحث"
+                            >
+                                مسح
+                            </button>
+                        )}
+                    </div>
                 </div>
                 <button onClick={fetchReport} className="w-full sm:w-auto bg-amber-500 text-white px-14 py-4 rounded-[1.2rem] font-black shadow-2xl shadow-amber-200 hover:bg-amber-600 hover:scale-105 transition-all flex items-center justify-center gap-3">
                     تحديث البيانات ⟳
@@ -1274,14 +1339,14 @@ function WarehouseReportView() {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-amber-50">
-                                    {detail.length === 0 && (
+                                    {filteredDetail.length === 0 && (
                                         <tr>
                                             <td colSpan={6} className="p-16 text-center text-gray-300 font-black text-lg">
-                                                لا توجد إيصالات مستودع حتى الآن. قم بمزامنة إيصالات المستودع من صفحة الفرز أولاً.
+                                                {itemSearch ? 'لا توجد نتائج تطابق البحث الحالي.' : 'لا توجد إيصالات مستودع حتى الآن. قم بمزامنة إيصالات المستودع من صفحة الفرز أولاً.'}
                                             </td>
                                         </tr>
                                     )}
-                                    {detail.map((row: any) => (
+                                    {filteredDetail.map((row: any) => (
                                         <tr key={row.uniqueid} className="hover:bg-amber-50/40 transition-colors">
                                             <td className="p-6 whitespace-nowrap text-gray-400 font-mono text-xs">{new Date(row.date).toLocaleDateString('ar-EG')}</td>
                                             <td className="p-6 font-black text-slate-700">{row.empName}</td>
@@ -1312,7 +1377,7 @@ function WarehouseReportView() {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-50">
-                                    {byModel.map((row: any) => (
+                                    {filteredByModel.map((row: any) => (
                                         <tr key={row.modelNo} className="hover:bg-amber-50/40 transition-colors">
                                             <td className="p-6 font-black text-xl text-blue-700 tracking-tight">{row.modelNo}</td>
                                             <td className="p-6 text-center font-bold text-gray-500">{row.receipts}</td>
@@ -1334,7 +1399,7 @@ function WarehouseReportView() {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-purple-50">
-                                    {byEmployee.map((row: any) => (
+                                    {filteredByEmployee.map((row: any) => (
                                         <tr key={row.empName} className="hover:bg-purple-50/40 transition-colors">
                                             <td className="p-6 font-black text-slate-800">{row.empName}</td>
                                             <td className="p-6 text-center font-bold text-gray-500">{row.receipts}</td>
@@ -1347,7 +1412,7 @@ function WarehouseReportView() {
                     </div>
 
                     <div className="grid gap-3 md:hidden">
-                        {viewMode === 'DETAIL' && detail.map((row: any) => (
+                        {viewMode === 'DETAIL' && filteredDetail.map((row: any) => (
                             <article key={row.uniqueid} className="rounded-2xl border border-amber-100 bg-white p-4 shadow-sm">
                                 <div className="flex items-start justify-between gap-3">
                                     <div><div className="text-xs font-bold text-gray-400">{new Date(row.date).toLocaleDateString('ar-EG')}</div><h3 className="mt-1 text-lg font-black text-blue-700">{row.modelNo}</h3></div>
@@ -1357,13 +1422,13 @@ function WarehouseReportView() {
                                 <div className="mt-2 text-xs font-bold text-slate-400">اللون: {row.color}</div>
                             </article>
                         ))}
-                        {viewMode === 'MODEL' && byModel.map((row: any) => (
+                        {viewMode === 'MODEL' && filteredByModel.map((row: any) => (
                             <article key={row.modelNo} className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div><h3 className="text-lg font-black text-blue-700">{row.modelNo}</h3><p className="mt-1 text-xs font-bold text-slate-400">{row.receipts} إيصالات</p></div><div className="text-left"><strong className="block text-xl font-black text-amber-600">{row.quantity}</strong><small className="text-[10px] font-bold text-slate-400">آخر إيصال {new Date(row.lastDate).toLocaleDateString('ar-EG')}</small></div></article>
                         ))}
-                        {viewMode === 'EMPLOYEE' && byEmployee.map((row: any) => (
+                        {viewMode === 'EMPLOYEE' && filteredByEmployee.map((row: any) => (
                             <article key={row.empName} className="flex items-center justify-between rounded-2xl border border-purple-100 bg-white p-4 shadow-sm"><h3 className="font-black text-slate-800">{row.empName}</h3><div className="text-left"><strong className="block text-xl font-black text-purple-600">{row.quantity}</strong><small className="text-[10px] font-bold text-slate-400">{row.receipts} إيصالات</small></div></article>
                         ))}
-                        {((viewMode === 'DETAIL' && detail.length === 0) || (viewMode === 'MODEL' && byModel.length === 0) || (viewMode === 'EMPLOYEE' && byEmployee.length === 0)) && <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-sm font-bold text-slate-400">لا توجد بيانات لهذه الفترة</div>}
+                        {((viewMode === 'DETAIL' && filteredDetail.length === 0) || (viewMode === 'MODEL' && filteredByModel.length === 0) || (viewMode === 'EMPLOYEE' && filteredByEmployee.length === 0)) && <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-sm font-bold text-slate-400">{itemSearch ? 'لا توجد نتائج تطابق البحث الحالي' : 'لا توجد بيانات لهذه الفترة'}</div>}
                     </div>
                 </>
             )}

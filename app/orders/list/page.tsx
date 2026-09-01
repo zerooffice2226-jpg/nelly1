@@ -3,6 +3,7 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { getUserOrders, deleteOrder, getSettings, toggleDeferredCustomer } from '@/app/actions';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
+import * as XLSX from 'xlsx';
 // مكتبات الطباعة
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
@@ -134,6 +135,32 @@ export default function OrdersListPage() {
   const handlePdfClick = (order: any) => {
       setIsGeneratingPdf(true);
       setPdfOrder(order);
+  };
+
+  const handleExportOrderExcel = (order: any) => {
+      const safeCustomerName = String(order?.customer?.name || 'customer')
+          .trim()
+          .replace(/[\\/|:*?"<>]/g, '')
+          .replace(/\s+/g, '_');
+
+      const dataForExcel = Object.values(
+          (order.items || []).reduce((acc: Record<string, { barcode: string; qty: number }>, item: any) => {
+              const barcode = item.product?.modelNo || item.modelNo || 'UNKNOWN';
+              const qty = Number(item.quantity || 0) * PIECES_PER_UNIT;
+
+              if (!acc[barcode]) {
+                  acc[barcode] = { barcode, qty: 0 };
+              }
+
+              acc[barcode].qty += qty;
+              return acc;
+          }, {})
+      );
+
+      const ws = XLSX.utils.json_to_sheet(dataForExcel);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+      XLSX.writeFile(wb, `${safeCustomerName}_${order.orderNo}.xlsx`);
   };
 
   const generateAndSharePdf = async () => {
@@ -293,7 +320,7 @@ export default function OrdersListPage() {
                         <div className="text-xs text-gray-500 bg-gray-50 px-2 py-1 rounded">بواسطة: {order.user.name}</div>
                     </div>
 
-                    <div className={`grid ${userRole === 'EMPLOYEE' ? 'grid-cols-2' : 'grid-cols-3'} gap-2 mt-3`}>
+                    <div className={`grid ${userRole === 'EMPLOYEE' ? 'grid-cols-3' : 'grid-cols-4'} gap-2 mt-3`}>
                         <Link href={`/orders/${order.id}/print`} className="bg-blue-100 text-blue-700 py-2 rounded-lg text-center font-bold text-xs md:text-sm hover:bg-blue-200 flex items-center justify-center">
                             🖨️ طباعة
                         </Link>
@@ -304,6 +331,13 @@ export default function OrdersListPage() {
                             className="bg-green-100 text-green-700 py-2 rounded-lg text-center font-bold text-xs md:text-sm hover:bg-green-200 flex items-center justify-center gap-1"
                         >
                             📤 PDF
+                        </button>
+
+                        <button
+                            onClick={() => handleExportOrderExcel(order)}
+                            className="bg-emerald-100 text-emerald-700 py-2 rounded-lg text-center font-bold text-xs md:text-sm hover:bg-emerald-200 flex items-center justify-center gap-1"
+                        >
+                            📥 Excel
                         </button>
 
                         {userRole !== 'EMPLOYEE' && (
