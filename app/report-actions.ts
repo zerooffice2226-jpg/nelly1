@@ -282,27 +282,31 @@ export async function bulkUploadWarehouseReceipts(receiptsData: any[]) {
       return { success: false, error: 'لا توجد بيانات لإضافتها' };
     }
 
-    const plainRows = receiptsData.map((row) => {
-      if (!row || typeof row !== 'object' || Array.isArray(row)) {
-        return {};
-      }
-
-      const safeRow: Record<string, any> = {};
-      Object.entries(row).forEach(([key, value]) => {
-        if (key !== '__proto__' && key !== 'constructor' && key !== 'prototype') {
-          safeRow[String(key)] = value == null ? '' : value;
+    const plainRows = receiptsData
+      .map((row) => {
+        if (!row || typeof row !== 'object' || Array.isArray(row)) {
+          return {};
         }
-      });
 
-      return JSON.parse(JSON.stringify(safeRow));
-    });
+        const safeRow: Record<string, any> = {};
+        Object.entries(row).forEach(([key, value]) => {
+          if (key !== '__proto__' && key !== 'constructor' && key !== 'prototype') {
+            safeRow[String(key)] = value == null ? '' : value;
+          }
+        });
+
+        return JSON.parse(JSON.stringify(safeRow));
+      })
+      .filter((row) => row && Object.keys(row).length > 0);
 
     let inserted = 0;
     let skipped = 0;
     const errors: string[] = [];
     const seenUniqueIds = new Set<string>();
 
-    for (const row of plainRows) {
+    for (let index = 0; index < plainRows.length; index++) {
+      const row = plainRows[index];
+
       const rawUniqueId = getRowValue(row, ['uniqueid', 'معرف', 'معرف فريد', 'معرف فريد (uniqueid)', 'معرف فريد (uniqueId)']);
       const uniqueid = rawUniqueId == null ? '' : String(rawUniqueId).trim();
       const dateStr = getRowValue(row, ['date', 'التاريخ', 'التاريخ (date)', 'تاريخ']);
@@ -366,10 +370,31 @@ export async function bulkUploadWarehouseReceipts(receiptsData: any[]) {
       }
     }
 
+    if (inserted > 0) {
+      return {
+        success: true,
+        inserted,
+        skipped,
+        errors,
+        partial: skipped > 0 || errors.length > 0
+      };
+    }
+
+    if (errors.length > 0) {
+      return {
+        success: false,
+        inserted: 0,
+        skipped,
+        errors,
+        error: errors.slice(0, 3).join(' | ') || 'فشل الرفع الجماعي'
+      };
+    }
+
     return { success: true, inserted, skipped, errors };
-  } catch (e) {
-    console.error(e);
-    return { success: false, error: 'فشل الرفع الجماعي' };
+  } catch (e: any) {
+    const message = e instanceof Error ? e.message : 'فشل الرفع الجماعي';
+    console.error('Warehouse bulk upload failed:', e);
+    return { success: false, error: `فشل الرفع الجماعي: ${message}` };
   }
 }
 

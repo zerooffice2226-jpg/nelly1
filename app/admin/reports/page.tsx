@@ -1052,6 +1052,7 @@ function WarehouseReportView() {
     const [loading, setLoading] = useState(false);
     const [viewMode, setViewMode] = useState<'DETAIL' | 'MODEL' | 'EMPLOYEE'>('DETAIL');
     const [uploading, setUploading] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState<{ processed: number; total: number; percentage: number; current: string; step: string } | null>(null);
     const [clearing, setClearing] = useState(false);
     const [uploadResult, setUploadResult] = useState<any>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1147,6 +1148,8 @@ function WarehouseReportView() {
 
         setUploading(true);
         setUploadResult(null);
+        setUploadProgress({ processed: 0, total: 1, percentage: 10, current: 'جارِ قراءة الملف...', step: 'تهيئة الرفع' });
+
         try {
             const buffer = await file.arrayBuffer();
             const workbook = XLSX.read(buffer, { type: 'array' });
@@ -1154,15 +1157,33 @@ function WarehouseReportView() {
             const rows = (XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false }) as Record<string, any>[])
               .map((row) => JSON.parse(JSON.stringify(row)));
 
+            setUploadProgress({
+                processed: 0,
+                total: Math.max(rows.length, 1),
+                percentage: 25,
+                current: 'تم قراءة الملف بنجاح، جاري تجهيز الرفع...',
+                step: 'تحضير البيانات'
+            });
+
             const res = await bulkUploadWarehouseReceipts(rows);
             setUploadResult(res);
             if (res.success) {
+                setUploadProgress({
+                    processed: Math.max(rows.length, 1),
+                    total: Math.max(rows.length, 1),
+                    percentage: 100,
+                    current: 'تمت المعالجة بنجاح',
+                    step: 'اكتملت العملية'
+                });
                 fetchReport();
             }
         } catch (err: any) {
-            setUploadResult({ success: false, error: 'فشل قراءة الملف: ' + (err.message || err) });
+            const message = err instanceof Error ? err.message : String(err || 'خطأ غير معروف');
+            setUploadResult({ success: false, error: 'فشل قراءة الملف: ' + message });
         }
+
         setUploading(false);
+        setTimeout(() => setUploadProgress(null), 1200);
     };
 
     const fetchReport = useCallback(async () => {
@@ -1278,6 +1299,27 @@ function WarehouseReportView() {
                     onChange={handleFileUpload}
                 />
             </div>
+
+            {uploading && uploadProgress && (
+                <div className="p-6 rounded-[2rem] border-2 border-amber-200 bg-amber-50 text-amber-900 shadow-inner">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <div className="text-sm font-black uppercase tracking-[0.2em] text-amber-700">تقدم الرفع</div>
+                            <div className="text-lg font-black">{uploadProgress.step}</div>
+                        </div>
+                        <div className="text-sm font-black">{uploadProgress.processed} / {uploadProgress.total}</div>
+                    </div>
+
+                    <div className="mt-4 h-3 w-full overflow-hidden rounded-full bg-amber-200">
+                        <div
+                            className="h-full rounded-full bg-gradient-to-r from-amber-500 via-orange-500 to-yellow-400 transition-all duration-300"
+                            style={{ width: `${uploadProgress.percentage}%` }}
+                        />
+                    </div>
+
+                    <div className="mt-3 text-sm font-bold text-amber-800">{uploadProgress.current}</div>
+                </div>
+            )}
 
             {uploadResult && (
                 <div className={`p-6 rounded-[2rem] border-2 font-bold ${uploadResult.success ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-red-50 border-red-200 text-red-700'}`}>
