@@ -271,12 +271,15 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
         data.forEach(item => {
             if (!groups[item.modelNo]) {
                 groups[item.modelNo] = {
-                    id: item.modelNo, modelNo: item.modelNo, material: item.material,
-                    colors: [], initialStock: 0, initialStockValue: 0, totalSold: 0, totalSoldValue: 0, currentStock: 0, currentValue: 0, history: []
+                    id: item.modelNo, modelNo: item.modelNo, description: item.description, material: item.material,
+                    colors: [], prices: [], initialStock: 0, initialStockValue: 0, totalSold: 0, totalSoldValue: 0, currentStock: 0, currentValue: 0, history: []
                 };
             }
             const g = groups[item.modelNo];
             g.colors.push({ name: item.color, sold: item.totalSold, stock: item.currentStock });
+            if (item.price !== null && item.price !== undefined && !g.prices.includes(item.price)) {
+                g.prices.push(item.price);
+            }
             g.initialStock += item.initialStock;
             g.initialStockValue += item.initialStock * (item.price || 0);
             g.totalSold += item.totalSold;
@@ -287,7 +290,11 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                 g.history.push(...item.history)
             }
         });
-        return Object.values(groups);
+        return Object.values(groups).map((group: any) => ({
+            ...group,
+            price: group.prices.length === 1 ? group.prices[0] : null,
+            priceLabel: group.prices.length > 0 ? group.prices.join(' / ') : '-'
+        }));
     };
 
     let displayData = viewMode === 'COLOR' ? [...data] : getGroupedData();
@@ -306,7 +313,7 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                 else linked = [term];
                 return linked.includes(item.modelNo.toString());
             }
-            return item.modelNo.toLowerCase().includes(term) || item.material?.toLowerCase().includes(term);
+            return item.modelNo.toLowerCase().includes(term) || item.description?.toLowerCase().includes(term) || item.material?.toLowerCase().includes(term);
         });
     }
 
@@ -419,8 +426,10 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
         const handleDownload = () => {
             const excelData = displayData.map((item: any) => ({
                 "كود الموديل": item.modelNo,
+                "وصف الموديل": item.description || '-',
                 "الخامة": item.material || '-',
                 "اللون": viewMode === 'COLOR' ? (item.color || '-') : (item.colors?.map((c: any) => `${c.name} (${c.sold / 4} سرية)`).join(' | ') || '-'),
+                "سعر المنتج": viewMode === 'COLOR' ? (item.price ?? 0) : (item.priceLabel || item.price || '-'),
                 "المخزون الأولي": item.initialStock ?? 0,
                 "المباع (سرية)": item.totalSold ?? 0,
                 "المخزون الحالي": item.currentStock ?? 0,
@@ -489,8 +498,10 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                     <thead className="bg-slate-950 text-white">
                         <tr>
                             <th className="p-3 text-xs">كود الموديل</th>
+                            <th className="p-3 text-xs">وصف الموديل</th>
                             <th className="p-3 text-xs">الخامة</th>
                             <th className="p-3 text-xs">{viewMode === 'COLOR' ? 'اللون' : 'الألوان'}</th>
+                            <th className="p-3 text-xs">سعر المنتج</th>
                             {showInitialStock && <th className="p-3 text-xs">أولي</th>}
                             {showSold && <th className="p-3 text-xs">مباع</th>}
                             <th className="p-3 text-xs">المطلوب قصه</th>
@@ -504,10 +515,12 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                             return (
                                 <tr key={getItemKey(item)} className="bg-white even:bg-slate-50">
                                     <td className="p-3 text-sm font-black">{item.modelNo}</td>
+                                    <td className="p-3 text-sm">{item.description || '-'}</td>
                                     <td className="p-3 text-sm">{item.material || '-'}</td>
                                     <td className="p-3 text-sm">
                                         {viewMode === 'COLOR' ? (item.color || '-') : (item.colors?.map((c: any) => `${c.name} (${c.sold / 4})`).join(' / ') || '-')}
                                     </td>
+                                    <td className="p-3 text-sm font-black text-blue-700">{viewMode === 'COLOR' ? `${item.price ?? 0} ج.م` : `${item.priceLabel || item.price || '-'} ج.م`}</td>
                                     {showInitialStock && <td className="p-3 text-sm">{item.initialStock ?? 0}</td>}
                                     {showSold && <td className="p-3 text-sm">{item.totalSold ?? 0} / {soldUnits}</td>}
                                     <td className="p-3 text-sm font-black text-indigo-700">{requiredCut}</td>
@@ -576,6 +589,7 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                             >
                                 كود الموديل {sortConfig?.key === 'modelNo' && (sortConfig.direction === 'asc' ? ' ↓' : ' ↑')}
                             </th>
+                            <th className="p-5">وصف الموديل</th>
                             <th className="p-5">الخامة</th>
                             <th className="p-5">{viewMode === 'COLOR' ? 'اللون' : 'الألوان'}</th>
                             {showInitialStock && <th className="p-5">أولي (قطعة)</th>}
@@ -606,6 +620,7 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                             return (
                                 <tr key={key} className="border-b hover:bg-gray-50 transition-colors">
                                     <td className="p-5 font-black text-xl">{item.modelNo}</td>
+                                    <td className="p-5 text-gray-600 font-bold text-sm">{item.description || '-'}</td>
                                     <td className="p-5 text-gray-400 font-bold text-sm">{item.material || '-'}</td>
                                     <td className="p-5">
                                         {viewMode === 'COLOR' ? (
@@ -675,6 +690,7 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                             <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
                                 <div>
                                     <h3 className="text-xl font-black text-slate-900">{item.modelNo}</h3>
+                                    <p className="mt-1 text-sm font-bold text-slate-600">{item.description || 'بدون وصف'}</p>
                                     <p className="mt-1 text-xs font-bold text-slate-400">{item.material || 'بدون خامة'}</p>
                                 </div>
                                 {viewMode === 'COLOR' ? (
@@ -693,6 +709,10 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                                 </div>
                             )}
                             <div className="mt-3 grid grid-cols-2 gap-2 text-center">
+                                <div className="rounded-xl bg-blue-50 p-2">
+                                    <div className="text-[10px] font-bold text-blue-500">سعر المنتج</div>
+                                    <div className="mt-1 text-lg font-black text-blue-800">{viewMode === 'COLOR' ? `${item.price ?? 0} ج.م` : `${item.priceLabel || item.price || '-'} ج.م`}</div>
+                                </div>
                                 {showInitialStock && (
                                     <div className="rounded-xl bg-blue-50 p-2">
                                         <div className="text-[10px] font-bold text-blue-500">المخزون الأولي</div>
