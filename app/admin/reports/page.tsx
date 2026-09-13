@@ -520,7 +520,7 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                                     <td className="p-3 text-sm">
                                         {viewMode === 'COLOR' ? (item.color || '-') : (item.colors?.map((c: any) => `${c.name} (${c.sold / 4})`).join(' / ') || '-')}
                                     </td>
-                                    <td className="p-3 text-sm font-black text-blue-700">{viewMode === 'COLOR' ? `${item.price ?? 0} ج.م` : `${item.priceLabel || item.price || '-'} ج.م`}</td>
+                                    <td className="p-3 text-sm font-black text-blue-700">{viewMode === 'COLOR' ? (item.price ?? 0) : (item.priceLabel || item.price || '-')}</td>
                                     {showInitialStock && <td className="p-3 text-sm">{item.initialStock ?? 0}</td>}
                                     {showSold && <td className="p-3 text-sm">{item.totalSold ?? 0} / {soldUnits}</td>}
                                     <td className="p-3 text-sm font-black text-indigo-700">{requiredCut}</td>
@@ -638,8 +638,8 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                                     </td>
                                     <td className="p-5 font-black text-blue-700">
                                         {viewMode === 'COLOR'
-                                            ? `${item.price ?? 0} ج.م`
-                                            : `${item.priceLabel || item.price || '-'} ج.م`}
+                                            ? (item.price ?? 0)
+                                            : (item.priceLabel || item.price || '-')}
                                     </td>
                                     {showInitialStock && <td className="p-5 font-bold text-gray-400">{item.initialStock}</td>}
                                     {showSold && <td className="p-5 text-yellow-600 font-black text-lg">
@@ -717,7 +717,7 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                             <div className="mt-3 grid grid-cols-2 gap-2 text-center">
                                 <div className="rounded-xl bg-blue-50 p-2">
                                     <div className="text-[10px] font-bold text-blue-500">سعر المنتج</div>
-                                    <div className="mt-1 text-lg font-black text-blue-800">{viewMode === 'COLOR' ? `${item.price ?? 0} ج.م` : `${item.priceLabel || item.price || '-'} ج.م`}</div>
+                                    <div className="mt-1 text-lg font-black text-blue-800">{viewMode === 'COLOR' ? (item.price ?? 0) : (item.priceLabel || item.price || '-')}</div>
                                 </div>
                                 {showInitialStock && (
                                     <div className="rounded-xl bg-blue-50 p-2">
