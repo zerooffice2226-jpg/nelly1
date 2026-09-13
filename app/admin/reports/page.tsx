@@ -592,6 +592,7 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                             <th className="p-5">وصف الموديل</th>
                             <th className="p-5">الخامة</th>
                             <th className="p-5">{viewMode === 'COLOR' ? 'اللون' : 'الألوان'}</th>
+                            <th className="p-5 text-blue-200">سعر الصنف</th>
                             {showInitialStock && <th className="p-5">أولي (قطعة)</th>}
                             {showSold && <th 
                                 className="p-5 text-yellow-500 cursor-pointer hover:bg-slate-800 transition-colors select-none"
@@ -634,6 +635,11 @@ function InventoryReportView({ printMode }: { printMode: 'TABLE' | 'CARD' }) {
                                                 ))}
                                             </div>
                                         )}
+                                    </td>
+                                    <td className="p-5 font-black text-blue-700">
+                                        {viewMode === 'COLOR'
+                                            ? `${item.price ?? 0} ج.م`
+                                            : `${item.priceLabel || item.price || '-'} ج.م`}
                                     </td>
                                     {showInitialStock && <td className="p-5 font-bold text-gray-400">{item.initialStock}</td>}
                                     {showSold && <td className="p-5 text-yellow-600 font-black text-lg">
