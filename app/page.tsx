@@ -4,7 +4,7 @@ import Link from "next/link";
 import { getCurrentUser } from "./actions"; 
 import { authOptions } from "@/auth";
 import NotificationBell from "./admin/NotificationBell";
-import TestOrderButton from "./TestOrderButton";
+import BulkOrderModal from "./BulkOrderModal";
 
 export default async function Home() {
   const session = await getServerSession(authOptions);
@@ -20,7 +20,6 @@ export default async function Home() {
   }
 
   const isAllowedInAdmin = user?.role === 'ADMIN' || user?.role === 'OWNER' || user?.role === 'ACCOUNTANT';
-  const isTestUser = user?.role === 'ADMIN' || user?.role === 'OWNER';
 
   return (
     <div className="min-h-screen bg-gray-50 p-4" dir="rtl">
@@ -39,7 +38,8 @@ export default async function Home() {
         <div className="flex items-center gap-3">
             {isAllowedInAdmin && <NotificationBell isDark={false} />}
 
-            {isTestUser && <TestOrderButton userId={user.id} />}
+            {/* زر الفاتورة المجمعة الجديد بدلاً من الفاتورة التجريبية */}
+            {isAllowedInAdmin && <BulkOrderModal userId={user.id} />}
 
             {isAllowedInAdmin && (
                 <Link href="/admin" className="bg-slate-900 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-black transition-all shadow-lg shadow-slate-200 flex items-center gap-2">
