@@ -18,19 +18,18 @@ async function main() {
     where: { code: code },
     update: {
       password: hashedPassword,
-      role: 'OWNER' // صلاحية كاملة
+      role: 'ADMIN'
     },
     create: {
       code: code,
       name: name,
       password: hashedPassword,
-      role: 'OWNER'
+      role: 'ADMIN'
     },
   })
 
   console.log('✅ تم إنشاء/تحديث المستخدم بنجاح!')
   console.log(`👤 الكود: ${user.code}`)
-  console.log(`🔑 كلمة المرور: ${password}`)
 }
 
 main()
