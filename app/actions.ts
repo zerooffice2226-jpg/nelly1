@@ -117,29 +117,17 @@ export async function getSafes() {
 export async function getProductsForSearch() {
   try {
     const products = await prisma.product.findMany({
-      include: {
-        orderItems: {
-          where: { order: { isDeferredCustomer: false } },
-          select: { quantity: true },
-        },
-      },
       orderBy: { modelNo: 'asc' },
     })
 
     const logicalProducts = products.map((p) => {
-      const initialPieces = p.stockQty || 0
-      const totalSoldPieces = p.orderItems.reduce((acc, item) => {
-        return acc + (item.quantity || 0) * PIECES_PER_UNIT
-      }, 0)
-
-      const actualCurrentStockPieces = initialPieces - totalSoldPieces
-
       return {
         id: p.id,
         modelNo: p.modelNo,
         color: p.color,
         price: p.price,
-        currentStock: actualCurrentStockPieces,
+        // قراءة الرصيد الفعلي الحقيقي المباشر المخصوم منه مبيعات المتجر والمعرض معاً
+        currentStock: p.currentStock,
         status: p.status,
         description: p.description,
         discount: p.discount,

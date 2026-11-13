@@ -1,4 +1,3 @@
-
 generator client {
   provider      = "prisma-client-js"
   binaryTargets = ["native", "linux-musl", "debian-openssl-3.0.x"]
@@ -10,6 +9,9 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+// ========================================================
+// جداول المعرض الأصلية (POS)
+// ========================================================
 model User {
   id        String    @id @default(cuid())
   code      String    @unique
@@ -34,18 +36,22 @@ model Customer {
 }
 
 model Product {
-  id               String      @id @default(cuid())
+  id               String       @id @default(cuid())
   modelNo          String
   description      String?
   material         String?
   color            String
-  stockQty         Int         @default(0)
-  currentStock     Int         @default(0)
+  stockQty         Int          @default(0)
+  currentStock     Int          @default(0)
   price            Float
-  discount         Float       @default(0.0)
-  status           String      @default("OPEN") 
+  discount         Float        @default(0.0)
+  status           String       @default("OPEN") 
+  isStockAlertRead Boolean      @default(false)
 
-  isStockAlertRead Boolean     @default(false)
+  // حقول المتجر الإضافية المشتركة
+  group_name       String?
+  kind_name        String?
+  image            String?
 
   orderItems       OrderItem[]
   syncRecords      SyncRecord[]
@@ -63,43 +69,40 @@ model Safe {
 }
 
 model Order {
-  id          String      @id @default(cuid())
-  orderNo     Int         @default(autoincrement())
-  createdAt   DateTime    @default(now())
-
-  deposit     Float       @default(0.0)
-  currency    String      @default("EGP")
-  discount    Float       @default(0.0) 
-  isDeferredCustomer Boolean @default(false)
-
-  totalAmount Float
-  userId      String
-  user        User        @relation(fields: [userId], references: [id])
-  customerId  String
-  customer    Customer    @relation(fields: [customerId], references: [id])
-  safeId      String?
-  safe        Safe?       @relation(fields: [safeId], references: [id])
-  items       OrderItem[]
-  notes       String?
+  id                 String      @id @default(cuid())
+  orderNo            Int         @default(autoincrement())
+  createdAt          DateTime    @default(now())
+  deposit            Float       @default(0.0)
+  currency           String      @default("EGP")
+  discount           Float       @default(0.0) 
+  isDeferredCustomer Boolean     @default(false)
+  totalAmount        Float
+  userId             String
+  user               User        @relation(fields: [userId], references: [id])
+  customerId         String
+  customer           Customer    @relation(fields: [customerId], references: [id])
+  safeId             String?
+  safe               Safe?       @relation(fields: [safeId], references: [id])
+  items              OrderItem[]
+  notes              String?
 }
 
 model OrderItem {
-  id              String  @id @default(cuid())
+  id              String           @id @default(cuid())
   orderId         String
-  order           Order   @relation(fields: [orderId], references: [id])
+  order           Order            @relation(fields: [orderId], references: [id])
   productId       String
-  product         Product @relation(fields: [productId], references: [id])
+  product         Product          @relation(fields: [productId], references: [id])
   quantity        Int     
-  fulfilledQty    Int     @default(0) 
+  fulfilledQty    Int              @default(0) 
   price           Float
-  discountPercent Int     @default(0)
-  isPostponed     Boolean @default(false)
-
+  discountPercent Int              @default(0)
+  isPostponed     Boolean          @default(false)
   logs            FulfillmentLog[]
 }
 
 model FulfillmentLog {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   orderItemId String
   orderItem   OrderItem @relation(fields: [orderItemId], references: [id])
   quantity    Int       
@@ -108,37 +111,31 @@ model FulfillmentLog {
 }
 
 model Payment {
-  id           String   @id @default(cuid())
-  receiptNo    Int      @default(autoincrement())
-  createdAt    DateTime @default(now())
+  id           String    @id @default(cuid())
+  receiptNo    Int       @default(autoincrement())
+  createdAt    DateTime  @default(now())
   amount       Float
-  currency     String   @default("EGP") 
-
-  type         String   @default("IN") 
+  currency     String    @default("EGP") 
+  type         String    @default("IN") 
   description  String?  
-
   customerId   String?  
   customer     Customer? @relation(fields: [customerId], references: [id])
-
   userId       String
-  user         User     @relation(fields: [userId], references: [id])
-
+  user         User      @relation(fields: [userId], references: [id])
   safeId       String   
-  safe         Safe     @relation("SourceSafe", fields: [safeId], references: [id])
-
+  safe         Safe      @relation("SourceSafe", fields: [safeId], references: [id])
   targetSafeId String?  
-  targetSafe   Safe?    @relation("TargetSafe", fields: [targetSafeId], references: [id])
+  targetSafe   Safe?     @relation("TargetSafe", fields: [targetSafeId], references: [id])
 }
 
 model WarehouseReceipt {
-  uniqueid String   @id             
-  date     DateTime                 
-  empName  String                   
-  modelNo  String                   
-  most     Int                      
-  color    String?                  
-
-  warehouseSyncRecord WarehouseSyncRecord? // Relation to the sync record
+  uniqueid            String                @id             
+  date                DateTime                 
+  empName             String                   
+  modelNo             String                   
+  most                Int                      
+  color               String?                  
+  warehouseSyncRecord WarehouseSyncRecord?
 
   @@index([modelNo])                
   @@index([date])                   
@@ -153,63 +150,187 @@ model Settings {
 }
 
 model Job {
-  id           String    @id @default(cuid())
-  name         String
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  completedAt  DateTime? // When the job was finished
-  type         String
-  status       String    @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED
-  progress     Int       @default(0)
-  logs         String?
-  payload      Json?
-  result       Json?
+  id          String    @id @default(cuid())
+  name        String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+  type        String
+  status      String    @default("PENDING")
+  progress    Int       @default(0)
+  logs        String?
+  payload     Json?
+  result      Json?
 
   @@index([type, status])
 }
 
-// --- Product Sync Models ---
-
 model SyncOperation {
   id          String       @id @default(cuid())
   createdAt   DateTime     @default(now())
-  startDate   DateTime     // The date chosen by the user to start syncing from
-  itemsCount  Int          @default(0) // Number of successfully synced items
+  startDate   DateTime
+  itemsCount  Int          @default(0)
   status      String       @default("COMPLETED")
   records     SyncRecord[]
 }
 
 model SyncRecord {
-  id               String        @id @default(cuid())
-  syncOperationId  String
-  operation        SyncOperation @relation(fields: [syncOperationId], references: [id], onDelete: Cascade)
-  
-  productId        String
-  product          Product       @relation(fields: [productId], references: [id])
-  
-  quantityAdded    Int           // Quantity added to be able to decrement on revert
-  uniqueKey        String        @unique // Unique key to prevent duplicates (sheet row id + model code)
+  id              String        @id @default(cuid())
+  syncOperationId String
+  operation       SyncOperation @relation(fields: [syncOperationId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id])
+  quantityAdded   Int
+  uniqueKey       String        @unique
 
   @@index([syncOperationId])
 }
 
-// --- Warehouse Sync Models ---
-
 model WarehouseSyncOperation {
-  id          String       @id @default(cuid())
-  createdAt   DateTime     @default(now())
+  id          String                @id @default(cuid())
+  createdAt   DateTime              @default(now())
   startDate   DateTime
-  itemsCount  Int          @default(0)
+  itemsCount  Int                   @default(0)
   records     WarehouseSyncRecord[]
 }
 
 model WarehouseSyncRecord {
-  id                String                 @id @default(cuid())
-  syncOperationId   String
-  operation         WarehouseSyncOperation @relation(fields: [syncOperationId], references: [id], onDelete: Cascade)
-  
-  warehouseReceiptId String                @unique // The uniqueid of the created WarehouseReceipt
-  receipt           WarehouseReceipt       @relation(fields: [warehouseReceiptId], references: [uniqueid])
+  id                 String                 @id @default(cuid())
+  syncOperationId    String
+  operation          WarehouseSyncOperation @relation(fields: [syncOperationId], references: [id], onDelete: Cascade)
+  warehouseReceiptId String                 @unique
+  receipt            WarehouseReceipt       @relation(fields: [warehouseReceiptId], references: [uniqueid])
 
   @@index([syncOperationId])
+}
+
+// ========================================================
+// جداول المتجر (للحماية والتعريف فقط)
+// ========================================================
+model products {
+  unique_id     String    @id @db.VarChar(50)
+  master_code   String?   @db.VarChar(100)
+  item_code     String?   @db.VarChar(100)
+  item_name     String?   @db.VarChar(255)
+  color         String?   @db.VarChar(255)
+  size          String?   @db.VarChar(255)
+  item_id       Int?
+  type_id       Int?
+  unit_id       Int?
+  unit_convert  Float?    @db.DoublePrecision
+  multi_unit    Boolean?
+  multi_type    Boolean?
+  unit_def1_id  Int?
+  cur_qty       Decimal?  @db.Decimal(18, 3)
+  group_id      Int?
+  class_id      Int?
+  is_basic_unit Boolean?
+  class_name    String?   @db.VarChar(200)
+  kind_id       Int?
+  place_id      Int?
+  unit_name_id  Int?
+  unit_name     String?   @db.VarChar(200)
+  av_price      Decimal?  @db.Decimal(19, 4)
+  out_price     Decimal?  @db.Decimal(19, 4)
+  stor_id       Int?
+  group_name    String?   @db.VarChar(200)
+  kind_name     String?   @db.VarChar(200)
+  place_name    String?   @db.VarChar(200)
+  images        String?   @db.Text
+}
+
+model categories {
+  id         Int          @id @default(autoincrement())
+  name       String       @unique @db.VarChar(255)
+  image      String?      @db.Text
+  kind       String       @db.VarChar(100)
+  sub        String?      @db.VarChar(100)
+  promotions promotions[]
+}
+
+model promotions {
+  id          Int               @id @default(autoincrement())
+  name        String            @db.VarChar(255)
+  category_id Int
+  active      Boolean           @default(true)
+  starts_at   DateTime?
+  ends_at     DateTime?
+  created_at  DateTime          @default(now())
+  updated_at  DateTime          @updatedAt
+  category    categories        @relation(fields: [category_id], references: [id], onDelete: Cascade)
+  tiers       promotion_tiers[]
+}
+
+model promotion_tiers {
+  id           Int        @id @default(autoincrement())
+  promotion_id Int
+  min_quantity Int
+  bundle_price Decimal    @db.Decimal(19, 4)
+  promotion    promotions @relation(fields: [promotion_id], references: [id], onDelete: Cascade)
+
+  @@unique([promotion_id, min_quantity])
+  @@index([promotion_id, min_quantity])
+}
+
+model orders {
+  id            String        @id
+  customer_name String        @db.VarChar(255)
+  address       String        @db.Text
+  phone         String        @db.VarChar(50)
+  total_price   Decimal       @db.Decimal(19, 4)
+  status        String        @default("تحت التجهيز")
+  printed_by    String?       @db.VarChar(255)
+  printed_at    DateTime?
+  exported_by   String?       @db.VarChar(255)
+  exported_at   DateTime?
+  timestamp     DateTime      @default(now())
+  order_items   order_items[]
+}
+
+model order_items {
+  id         Int     @id @default(autoincrement())
+  order_id   String
+  product    String  @db.Text
+  quantity   Int
+  price      Decimal @db.Decimal(19, 4)
+  color      String? @db.VarChar(100)
+  item_code  String? @db.VarChar(100)
+  order      orders  @relation(fields: [order_id], references: [id])
+}
+
+model users {
+  userid      Int      @id @default(autoincrement())
+  usercode    String   @unique @db.VarChar(50)
+  username    String   @db.VarChar(100)
+  password    String   @db.VarChar(255)
+  phone       String?  @db.VarChar(20)
+  position    String   @db.VarChar(50) @default("عميل")
+  permissions String   @db.VarChar(500)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@map("users")
+}
+
+model company_info {
+  id               Int      @id @default(autoincrement())
+  company_name     String   @db.VarChar(255)
+  address          String?  @db.Text
+  logo             String?  @db.Text
+  email            String?  @db.VarChar(255)
+  facebook_url     String?  @db.VarChar(500)
+  instagram_url    String?  @db.VarChar(500)
+  tiktok_url       String?  @db.VarChar(500)
+  phone1           String?  @db.VarChar(20)
+  phone2           String?  @db.VarChar(20)
+  phone3           String?  @db.VarChar(20)
+  terms_conditions String?  @db.Text
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+}
+
+model visitor_stats {
+  id    Int      @id @default(autoincrement())
+  date  DateTime @unique @default(now()) @db.Date
+  count Int      @default(0)
 }
