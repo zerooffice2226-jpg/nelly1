@@ -1,16 +1,16 @@
 'use client'
-// ... (الاستيرادات السابقة)
+
 import { 
     addProduct, 
     getProducts, 
     deleteProduct, 
     addBulkProducts, 
     deleteBulkProducts, 
-    deleteAllProducts,
+    deleteAllProducts, 
     updateProduct, 
     syncFromGoogleSheets,
-    getSyncOperations,      // <--- استيراد جديد
-    revertSyncOperation     // <--- استيراد جديد
+    getSyncOperations,
+    revertSyncOperation
 } from '@/app/admin-actions';
 import { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
@@ -39,7 +39,7 @@ function AdminSyncControl({ onRefresh }: { onRefresh: () => void }) {
         if (result.success) {
             alert(result.message);
             loadHistory();
-            onRefresh(); // تحديث المنتجات في الصفحة الرئيسية
+            onRefresh();
         } else {
             alert("فشل المزامنة: " + result.error);
         }
@@ -56,7 +56,7 @@ function AdminSyncControl({ onRefresh }: { onRefresh: () => void }) {
         if (res.success) {
             alert("تم التراجع بنجاح وإلغاء العملية.");
             loadHistory();
-            onRefresh(); // تحديث المنتجات
+            onRefresh();
         } else {
             alert("خطأ: " + res.error);
         }
@@ -88,7 +88,6 @@ function AdminSyncControl({ onRefresh }: { onRefresh: () => void }) {
                 </button>
             </div>
 
-            {/* عرض سجل عمليات المزامنة */}
             {syncHistory.length > 0 && (
                 <div className="w-full">
                     <h4 className="text-xs font-bold text-gray-500 mb-2">أحدث عمليات المزامنة:</h4>
@@ -137,15 +136,17 @@ function AdminSyncControl({ onRefresh }: { onRefresh: () => void }) {
 export default function ProductsPage() {
   const [products, setProducts] = useState<any[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [searchTerm, setSearchTerm] = useState(''); // حالة البحث اللايف
+  const [searchTerm, setSearchTerm] = useState('');
   
   // Adding States
   const [modelNo, setModelNo] = useState('');
   const [description, setDescription] = useState('');
   const [material, setMaterial] = useState('');
   const [price, setPrice] = useState('');
-  const [discount, setDiscount] = useState('0'); // 👈 حقل الخصم الجديد
+  const [discount, setDiscount] = useState('0');
   const [status, setStatus] = useState('OPEN');
+  const [groupName, setGroupName] = useState('');
+  const [kindName, setKindName] = useState('');
   const [colors, setColors] = useState([{ color: '', stock: '' }]);
 
   // Edit States
@@ -171,11 +172,11 @@ export default function ProductsPage() {
     });
   };
 
-  // منطق تصفية الأصناف (Live Search)
   const filteredProducts = useMemo(() => {
     return products.filter(p => 
         p.modelNo.toLowerCase().includes(searchTerm.toLowerCase()) || 
         (p.color && p.color.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (p.material && p.material.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (p.description && p.description.toLowerCase().includes(searchTerm.toLowerCase()))
     );
   }, [products, searchTerm]);
@@ -195,12 +196,21 @@ export default function ProductsPage() {
     if (!modelNo || !price) return alert('أكمل البيانات');
 
     const res = await addProduct({
-        modelNo, description, material, price, discount, status, colors // 👈 إرسال الخصم
+        modelNo,
+        description,
+        material,
+        price,
+        discount,
+        status,
+        group_name: groupName,
+        kind_name: kindName,
+        colors
     });
 
     if (res.success) {
         alert('تمت الإضافة');
         setModelNo(''); setDescription(''); setMaterial(''); setPrice(''); setDiscount('0');
+        setGroupName(''); setKindName('');
         setColors([{ color: '', stock: '' }]);
         refreshProducts();
     } else {
@@ -208,43 +218,80 @@ export default function ProductsPage() {
     }
   };
 
-  // --- Excel Logic ---
+  // نموذج الإكسيل الموحد
   const downloadTemplate = () => {
     const templateData = [
-        { modelNo: "1001", description: "وصف", material: "قطن", color: "أحمر", price: 150, discount: 10, stockQty: 50, status: "OPEN" }, // 👈 إضافة عمود discount للنموذج
-        { modelNo: "1001", description: "نفس الموديل", material: "قطن", color: "أزرق", price: 150, discount: 10, stockQty: 30, status: "OPEN" }
+      {
+        modelNo: "301",
+        color: "لبني",
+        material: "301لبني",
+        description: "طقم بناتي قطعتين",
+        price: 425,
+        discount: 0,
+        stockQty: 80,
+        status: "OPEN",
+        group_name: "بناتي",
+        kind_name: "طقم",
+        images: "https://images.vooy.shop/301-لبني.webp"
+      },
+      {
+        modelNo: "301",
+        color: "كافيه",
+        material: "301كافيه",
+        description: "طقم بناتي قطعتين",
+        price: 425,
+        discount: 0,
+        stockQty: 60,
+        status: "OPEN",
+        group_name: "بناتي",
+        kind_name: "طقم",
+        images: "https://images.vooy.shop/301-كافيه.webp"
+      },
+      {
+        modelNo: "405",
+        color: "رمادي",
+        material: "405رمادي",
+        description: "شورت بناتي خروج",
+        price: 150,
+        discount: 10,
+        stockQty: 200,
+        status: "OPEN",
+        group_name: "بناتي",
+        kind_name: "شورت",
+        images: "https://images.vooy.shop/405-رمادي.webp"
+      }
     ];
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Template");
-    XLSX.writeFile(wb, "Products_Template.xlsx");
+    XLSX.utils.book_append_sheet(wb, ws, "Unified_Products");
+    XLSX.writeFile(wb, "Unified_Products_Template.xlsx");
   };
 
-    const downloadProducts = () => {
-        if (products.length === 0) {
-            alert('لا توجد أصناف حالياً للتنزيل');
-            return;
-        }
+  const downloadProducts = () => {
+    if (products.length === 0) {
+        alert('لا توجد أصناف حالياً للتنزيل');
+        return;
+    }
 
-        const productData = products.map(product => ({
-            modelNo: product.modelNo,
-            description: product.description || '',
-            material: product.material || '',
-            color: product.color,
-            price: product.price,
-            discount: product.discount || 0,
-            stockQty: product.stockQty,
-            status: product.status
-        }));
-        const ws = XLSX.utils.json_to_sheet(productData, {
-            header: ['modelNo', 'description', 'material', 'color', 'price', 'discount', 'stockQty', 'status']
-        });
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Products");
-        XLSX.writeFile(wb, "Uploaded_Products.xlsx");
-    };
+    const productData = products.map(product => ({
+        modelNo: product.modelNo,
+        color: product.color,
+        material: product.material || `${product.modelNo}${product.color}`,
+        description: product.description || '',
+        price: product.price,
+        discount: product.discount || 0,
+        stockQty: product.currentStock,
+        status: product.status,
+        group_name: product.group_name || '',
+        kind_name: product.kind_name || '',
+        images: product.image || ''
+    }));
+    const ws = XLSX.utils.json_to_sheet(productData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Products");
+    XLSX.writeFile(wb, "Uploaded_Products_Backup.xlsx");
+  };
 
-  // 👇 تعديل منطق الرفع ليكون أكثر تحملاً للأعداد الكبيرة (1700+) 👇
   const handleFileUpload = (e: any) => {
     const file = e.target.files[0];
     if(!file) return;
@@ -260,9 +307,9 @@ export default function ProductsPage() {
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws);
         
-        if(confirm(`تم قراءة ${data.length} صنف. هل تريد البدء في الرفع؟`)) {
+        if(confirm(`تم قراءة ${data.length} صنف. هل تريد البدء في الرفع التراكمي الموحد؟`)) {
             setIsUploading(true);
-            const BATCH_SIZE = 100; // تقليل الحجم لضمان سرعة الاستجابة وتفادي التوقف
+            const BATCH_SIZE = 100;
             let successCount = 0;
             let failCount = 0;
             const total = data.length;
@@ -276,12 +323,9 @@ export default function ProductsPage() {
                     if (res.success) {
                         successCount += (res.count || 0);
                     } else {
-                        // لو السيرفر رفض مجموعة لأي سبب (مثل خطأ داتا)، نسجل الفشل ونكمل الباقي
-                        console.error("Batch failure:", res.error);
                         failCount += chunk.length;
                     }
-                } catch (err) {
-                    console.error("Critical error in batch:", err);
+                } catch {
                     failCount += chunk.length;
                 }
 
@@ -299,7 +343,6 @@ export default function ProductsPage() {
     reader.readAsBinaryString(file);
   };
 
-  // --- Delete Logic ---
   const handleDelete = async (id: string) => {
     if (confirm('حذف هذا الصنف نهائياً؟')) {
       setIsDeleting(true);
@@ -346,9 +389,8 @@ export default function ProductsPage() {
             }
         }
     }
-  }
+  };
 
-  // Helper Logic
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
       if(e.target.checked) setSelectedIds(filteredProducts.map(p => p.id));
       else setSelectedIds([]);
@@ -359,7 +401,6 @@ export default function ProductsPage() {
       else setSelectedIds([...selectedIds, id]);
   };
 
-  // Edit Logic
   const handleEditClick = (product: any) => {
       setEditingProduct({ ...product });
       setIsEditModalOpen(true);
@@ -385,16 +426,15 @@ export default function ProductsPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-4 rounded shadow-sm border-r-4 border-r-green-600">
         <div>
-            <h1 className="text-xl md:text-2xl font-bold text-gray-800">إدارة الأصناف</h1>
+            <h1 className="text-xl md:text-2xl font-bold text-gray-800">إدارة الأصناف (المعرض والمتجر)</h1>
             <p className="text-xs text-green-600 font-bold mt-1">العدد المصفى: {filteredProducts.length}</p>
         </div>
         
         <div className="flex flex-wrap gap-2 w-full md:w-auto">
-            {/* حقل البحث اللايف الجديد */}
             <div className="w-full md:w-64">
                 <input 
                     type="text" 
-                    placeholder="🔍 بحث برقم الموديل أو اللون..." 
+                    placeholder="🔍 بحث برقم الموديل أو اللون أو الكي..." 
                     className="w-full p-2 border-2 border-green-200 rounded-lg focus:border-blue-500 outline-none text-sm"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
@@ -425,11 +465,11 @@ export default function ProductsPage() {
       <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
           <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-2">
             <div className="w-full">
-                <h3 className="font-bold text-blue-800 text-sm md:text-lg">📥 استيراد Excel (يدعم الأعداد الكبيرة)</h3>
+                <h3 className="font-bold text-blue-800 text-sm md:text-lg">📥 استيراد Excel الموحد (المعرض + المتجر)</h3>
                 <div className="flex justify-between items-center mt-1">
                     <div className="flex gap-3">
-                        <button onClick={downloadTemplate} className="text-xs text-blue-700 underline font-bold">تحميل النموذج</button>
-                        <button onClick={downloadProducts} className="text-xs text-green-700 underline font-bold">تنزيل الأصناف الحالية</button>
+                        <button onClick={downloadTemplate} className="text-xs text-blue-700 underline font-bold">تحميل النموذج الموحد</button>
+                        <button onClick={downloadProducts} className="text-xs text-green-700 underline font-bold">نسخ احتياطي للأصناف</button>
                     </div>
                     <input type="file" accept=".xlsx, .xls" onChange={handleFileUpload} disabled={isUploading || isDeleting} className="text-xs bg-white p-2 rounded border cursor-pointer w-1/2" />
                 </div>
@@ -451,13 +491,18 @@ export default function ProductsPage() {
 
       {/* Form Adding */}
       <form onSubmit={handleSubmit} className="bg-white p-4 rounded-lg shadow space-y-4 border-t-4 border-green-600">
-        <h2 className="font-bold text-gray-700 text-sm border-b pb-2">إضافة صنف يدوياً</h2>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <div className="col-span-1"><label className="block text-xs font-bold text-gray-500 mb-1">الموديل</label><input type="text" className="w-full border p-2 rounded bg-gray-50 focus:bg-white" value={modelNo} onChange={e => setModelNo(e.target.value)} required /></div>
-            <div className="col-span-1"><label className="block text-xs font-bold text-gray-500 mb-1">السعر</label><input type="number" className="w-full border p-2 rounded font-bold focus:bg-white" value={price} onChange={e => setPrice(e.target.value)} required /></div>
-            {/* حقل الخصم التلقائي الجديد */}
-            <div className="col-span-1"><label className="block text-xs font-bold text-red-600 mb-1">خصم تلقائي %</label><input type="number" className="w-full border p-2 rounded font-bold focus:bg-red-50" value={discount} onChange={e => setDiscount(e.target.value)} /></div>
-            <div className="col-span-2"><label className="block text-xs font-bold text-gray-500 mb-1">الوصف</label><input type="text" className="w-full border p-2 rounded focus:bg-white" value={description} onChange={e => setDescription(e.target.value)} /></div>
+        <h2 className="font-bold text-gray-700 text-sm border-b pb-2">إضافة صنف جديد (بالمفتاح المميز وتصنيفات المتجر)</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div><label className="block text-xs font-bold text-gray-500 mb-1">الموديل (modelNo) *</label><input type="text" className="w-full border p-2 rounded bg-gray-50 focus:bg-white" value={modelNo} onChange={e => setModelNo(e.target.value)} required /></div>
+            <div><label className="block text-xs font-bold text-gray-500 mb-1">الكي / الماتيريال (اختياري)</label><input type="text" className="w-full border p-2 rounded focus:bg-white" placeholder="مثلاً: 301لبني" value={material} onChange={e => setMaterial(e.target.value)} /></div>
+            <div><label className="block text-xs font-bold text-gray-500 mb-1">سعر القطعة *</label><input type="number" className="w-full border p-2 rounded font-bold focus:bg-white" value={price} onChange={e => setPrice(e.target.value)} required /></div>
+            <div><label className="block text-xs font-bold text-red-600 mb-1">خصم تلقائي %</label><input type="number" className="w-full border p-2 rounded font-bold focus:bg-red-50" value={discount} onChange={e => setDiscount(e.target.value)} /></div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div><label className="block text-xs font-bold text-gray-500 mb-1">الوصف / اسم الموديل</label><input type="text" className="w-full border p-2 rounded focus:bg-white" value={description} onChange={e => setDescription(e.target.value)} /></div>
+            <div><label className="block text-xs font-bold text-indigo-700 mb-1">قسم المتجر (group_name)</label><input type="text" placeholder="بناتي / ولادي / أطفال" className="w-full border p-2 rounded focus:bg-white" value={groupName} onChange={e => setGroupName(e.target.value)} /></div>
+            <div><label className="block text-xs font-bold text-indigo-700 mb-1">نوع القطعة بالمتجر (kind_name)</label><input type="text" placeholder="طقم / فستان / شورت" className="w-full border p-2 rounded focus:bg-white" value={kindName} onChange={e => setKindName(e.target.value)} /></div>
         </div>
         
         <div className="flex gap-4 items-center bg-gray-50 p-2 rounded">
@@ -467,16 +512,16 @@ export default function ProductsPage() {
         </div>
 
         <div className="bg-gray-50 p-3 rounded border">
-            <label className="block text-xs font-bold mb-2">الألوان والمخزون</label>
+            <label className="block text-xs font-bold mb-2">الألوان والمخزون المتاح (بالقطع)</label>
             {colors.map((item, idx) => (
                 <div key={idx} className="flex gap-2 mb-2">
                     <input type="text" placeholder="اللون" className="border p-2 rounded flex-1 text-sm" value={item.color} onChange={e => handleColorChange(idx, 'color', e.target.value)} required />
-                    <input type="number" placeholder="العدد" className="border p-2 rounded w-20 text-center text-sm" value={item.stock} onChange={e => handleColorChange(idx, 'stock', e.target.value)} required />
+                    <input type="number" placeholder="عدد القطع" className="border p-2 rounded w-28 text-center text-sm font-bold" value={item.stock} onChange={e => handleColorChange(idx, 'stock', e.target.value)} required />
                 </div>
             ))}
-            <button type="button" onClick={handleAddColorField} className="text-xs text-blue-600 font-bold mt-1">+ إضافة لون</button>
+            <button type="button" onClick={handleAddColorField} className="text-xs text-blue-600 font-bold mt-1">+ إضافة لون آخر لنفس الموديل</button>
         </div>
-        <button type="submit" disabled={isDeleting} className="bg-green-600 text-white px-6 py-3 rounded font-bold w-full hover:bg-green-700 disabled:opacity-50 transition">حفظ</button>
+        <button type="submit" disabled={isDeleting} className="bg-green-600 text-white px-6 py-3 rounded font-bold w-full hover:bg-green-700 disabled:opacity-50 transition">حفظ الصنف الموحد</button>
       </form>
 
       {/* --- Responsive List --- */}
@@ -507,16 +552,17 @@ export default function ProductsPage() {
                                     {p.discount > 0 && <span className="text-[10px] bg-red-100 text-red-600 px-1 rounded font-bold">خصم {p.discount}%</span>}
                                     {p.status === 'CLOSED' && <span className="text-[10px] bg-red-100 text-red-600 px-1 rounded">مغلق</span>}
                                 </div>
-                                <span className="text-xs text-gray-500">{p.color}</span>
+                                <span className="text-xs text-gray-500 font-bold">اللون: {p.color}</span>
+                                {p.material && <span className="block text-[11px] font-mono text-indigo-600 font-bold">كي: {p.material}</span>}
                             </div>
                          </div>
                          <div className="text-left">
                              <div className="font-bold text-blue-600 text-lg">{p.price} ج.م</div>
-                             <div className={`text-xs font-bold ${p.stockQty > 0 ? 'text-green-600' : 'text-red-500'}`}>متاح: {p.stockQty}</div>
+                             <div className={`text-xs font-bold ${p.currentStock > 0 ? 'text-green-600' : 'text-red-500'}`}>متاح: {p.currentStock} قطعة ({Math.floor(p.currentStock / 4)} سرية)</div>
                          </div>
                     </div>
                     <div className="flex justify-between items-center border-t pt-2 mt-2">
-                        <span className="text-xs text-gray-400">ID: {p.id.substring(0, 6)}</span>
+                        <span className="text-[10px] text-gray-400">قسم: {p.group_name || 'عام'} - نوع: {p.kind_name || 'عام'}</span>
                         <div className="flex gap-2">
                             <button onClick={() => handleEditClick(p)} className="bg-blue-100 text-blue-600 px-3 py-1 rounded text-xs font-bold">تعديل</button>
                             <button onClick={() => handleDelete(p.id)} className="bg-red-100 text-red-600 px-3 py-1 rounded text-xs font-bold">حذف</button>
@@ -538,10 +584,13 @@ export default function ProductsPage() {
                 <th className="p-3 w-10 text-center"><input type="checkbox" onChange={handleSelectAll} checked={filteredProducts.length > 0 && selectedIds.length === filteredProducts.length} /></th>
                 <th className="p-3">الموديل</th>
                 <th className="p-3">اللون</th>
+                <th className="p-3">الكي المميز (material)</th>
+                <th className="p-3">قسم المتجر</th>
+                <th className="p-3">نوع القطعة</th>
                 <th className="p-3">الحالة</th>
-                <th className="p-3">المخزون</th>
-                <th className="p-3">السعر</th>
-                <th className="p-3">خصم تلقائي</th>
+                <th className="p-3">المخزون (قطع)</th>
+                <th className="p-3">المخزون (سرايا)</th>
+                <th className="p-3">سعر القطعة</th>
                 <th className="p-3 text-center">تحكم</th>
                 </tr>
             </thead>
@@ -551,10 +600,13 @@ export default function ProductsPage() {
                     <td className="p-3 text-center"><input type="checkbox" checked={selectedIds.includes(p.id)} onChange={() => handleSelectOne(p.id)} /></td>
                     <td className="p-3 font-bold">{p.modelNo}</td>
                     <td className="p-3">{p.color}</td>
+                    <td className="p-3 font-mono font-bold text-indigo-700">{p.material || `${p.modelNo}${p.color}`}</td>
+                    <td className="p-3 text-xs">{p.group_name || '-'}</td>
+                    <td className="p-3 text-xs">{p.kind_name || '-'}</td>
                     <td className="p-3">{p.status === 'CLOSED' ? <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs">مغلق</span> : <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs">مفتوح</span>}</td>
-                    <td className={`p-3 font-bold ${p.stockQty <= 0 ? 'text-red-500' : 'text-blue-600'}`}>{p.stockQty}</td>
-                    <td className="p-3 font-mono">{p.price}</td>
-                    <td className="p-3 font-bold text-red-600">{p.discount}%</td>
+                    <td className={`p-3 font-bold ${p.currentStock <= 0 ? 'text-red-500' : 'text-blue-600'}`}>{p.currentStock}</td>
+                    <td className="p-3 font-bold text-emerald-700">{Math.floor(p.currentStock / 4)}</td>
+                    <td className="p-3 font-mono font-bold">{p.price} ج.م</td>
                     <td className="p-3 flex justify-center gap-2">
                     <button onClick={() => handleEditClick(p)} className="text-blue-600 hover:text-blue-800 font-bold bg-blue-100 px-2 py-1 rounded text-xs">تعديل</button>
                     <button onClick={() => handleDelete(p.id)} disabled={isDeleting} className="text-red-600 hover:text-red-800 font-bold bg-red-100 px-2 py-1 rounded text-xs disabled:opacity-50">حذف</button>
@@ -572,12 +624,17 @@ export default function ProductsPage() {
               <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6 space-y-4">
                   <h3 className="font-bold border-b pb-2 text-lg">تعديل بيانات الصنف</h3>
                   <div className="grid grid-cols-2 gap-3">
-                      <div><label className="text-xs text-gray-500">الموديل</label><input type="text" className="w-full border p-2 rounded bg-gray-100" value={editingProduct.modelNo} readOnly /></div>
-                      <div><label className="text-xs text-gray-500">اللون</label><input type="text" className="w-full border p-2 rounded bg-gray-100" value={editingProduct.color} readOnly /></div>
+                      <div><label className="text-xs text-gray-500">الموديل</label><input type="text" className="w-full border p-2 rounded bg-gray-100 font-bold" value={editingProduct.modelNo} readOnly /></div>
+                      <div><label className="text-xs text-gray-500">اللون</label><input type="text" className="w-full border p-2 rounded bg-gray-100 font-bold" value={editingProduct.color} readOnly /></div>
                   </div>
+                  <div><label className="text-xs text-gray-500">الكي المميز (material)</label><input type="text" className="w-full border p-2 rounded font-mono font-bold text-indigo-700" value={editingProduct.material || ''} onChange={(e) => setEditingProduct({...editingProduct, material: e.target.value})} /></div>
                   <div><label className="text-xs text-gray-500">الوصف</label><input type="text" className="w-full border p-2 rounded" value={editingProduct.description || ''} onChange={(e) => setEditingProduct({...editingProduct, description: e.target.value})} /></div>
+                  <div className="grid grid-cols-2 gap-3">
+                      <div><label className="text-xs text-gray-500">قسم المتجر (group_name)</label><input type="text" className="w-full border p-2 rounded" value={editingProduct.group_name || ''} onChange={(e) => setEditingProduct({...editingProduct, group_name: e.target.value})} /></div>
+                      <div><label className="text-xs text-gray-500">نوع القطعة بالمتجر (kind_name)</label><input type="text" className="w-full border p-2 rounded" value={editingProduct.kind_name || ''} onChange={(e) => setEditingProduct({...editingProduct, kind_name: e.target.value})} /></div>
+                  </div>
                   <div className="grid grid-cols-3 gap-3">
-                      <div><label className="text-xs text-gray-500">الكمية</label><input type="number" className="w-full border p-2 rounded font-bold" value={editingProduct.stockQty} onChange={(e) => setEditingProduct({...editingProduct, stockQty: e.target.value})} /></div>
+                      <div><label className="text-xs text-gray-500">الكمية (قطع)</label><input type="number" className="w-full border p-2 rounded font-bold" value={editingProduct.currentStock} onChange={(e) => setEditingProduct({...editingProduct, currentStock: e.target.value, stockQty: e.target.value})} /></div>
                       <div><label className="text-xs text-gray-500">السعر</label><input type="number" className="w-full border p-2 rounded font-bold" value={editingProduct.price} onChange={(e) => setEditingProduct({...editingProduct, price: e.target.value})} /></div>
                       <div><label className="text-xs text-red-600">الخصم %</label><input type="number" className="w-full border p-2 rounded font-bold bg-red-50" value={editingProduct.discount} onChange={(e) => setEditingProduct({...editingProduct, discount: e.target.value})} /></div>
                   </div>
