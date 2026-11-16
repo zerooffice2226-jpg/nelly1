@@ -140,6 +140,7 @@ export async function updateProduct(id: string, data: {
   price: string | number;
   discount?: string | number;
   stockQty: string | number;
+  currentStock?: string | number;
   status: string;
   group_name?: string;
   kind_name?: string;
@@ -151,6 +152,16 @@ export async function updateProduct(id: string, data: {
       ? data.material.trim()
       : `${data.modelNo}${cleanColor}`.trim();
 
+    const existing = await prisma.product.findUnique({ where: { id } });
+    if (!existing) return { success: false, error: 'الصنف غير موجود' };
+
+    const newCurrentStock =
+      data.currentStock !== undefined && data.currentStock !== ''
+        ? parseInt(String(data.currentStock), 10) || 0
+        : parseInt(String(data.stockQty), 10) || 0;
+
+    const stockDelta = newCurrentStock - existing.currentStock;
+
     await prisma.product.update({
       where: { id },
       data: {
@@ -160,8 +171,8 @@ export async function updateProduct(id: string, data: {
         color: cleanColor,
         price: parseFloat(String(data.price)) || 0,
         discount: parseFloat(String(data.discount)) || 0,
-        stockQty: parseInt(String(data.stockQty), 10) || 0,
-        currentStock: parseInt(String(data.stockQty), 10) || 0,
+        stockQty: existing.stockQty + stockDelta,
+        currentStock: newCurrentStock,
         status: data.status,
         group_name: data.group_name || undefined,
         kind_name: data.kind_name || undefined,
@@ -170,6 +181,7 @@ export async function updateProduct(id: string, data: {
     });
     revalidatePath('/admin/products');
     revalidatePath('/admin/notifications');
+    revalidatePath('/admin/reports');
     return { success: true };
   } catch {
     return { success: false, error: 'فشل التعديل' };

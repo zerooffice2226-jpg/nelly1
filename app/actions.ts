@@ -288,16 +288,16 @@ export async function createOrder(
 
         await tx.orderItem.createMany({ data: orderItemsData })
 
-        const productsToUpdate = products.filter((p) => p.status !== 'OPEN')
-        if (productsToUpdate.length > 0) {
-          const caseStatement = productsToUpdate
+        // خصم currentStock لجميع الأصناف (OPEN و CLOSED) لتطابق المعرض مع المتجر والتقرير
+        if (products.length > 0) {
+          const caseStatement = products
             .map(
               (p) =>
                 `WHEN id = '${p.id}' THEN "currentStock" - ${productQuantities.get(p.id)}`
             )
             .join(' ')
 
-          const idList = productsToUpdate.map((p) => `'${p.id}'`).join(',')
+          const idList = products.map((p) => `'${p.id}'`).join(',')
           const query = `UPDATE "Product" SET "currentStock" = CASE ${caseStatement} END WHERE id IN (${idList})`
 
           await tx.$executeRawUnsafe(query)

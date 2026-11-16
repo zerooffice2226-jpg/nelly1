@@ -205,17 +205,12 @@ export async function createBulkOrder(payload: CreateBulkOrderPayload, userId: s
       }))
       await tx.orderItem.createMany({ data: orderItems })
 
-      // ج) خصم رصيد المخزون currentStock للأصناف غير المفتوحة
-      const productsToUpdate = readyItemsData.filter(item => {
-        const prod = productsInDb.find(p => p.id === item.productId)
-        return prod && prod.status !== 'OPEN'
-      })
-
-      if (productsToUpdate.length > 0) {
-        const caseStatement = productsToUpdate
+      // ج) خصم رصيد المخزون currentStock لجميع الأصناف (OPEN و CLOSED)
+      if (readyItemsData.length > 0) {
+        const caseStatement = readyItemsData
           .map(i => `WHEN id = '${i.productId}' THEN "currentStock" - ${i.neededPieces}`)
           .join(' ')
-        const idList = productsToUpdate.map(i => `'${i.productId}'`).join(',')
+        const idList = readyItemsData.map(i => `'${i.productId}'`).join(',')
         const query = `UPDATE "Product" SET "currentStock" = CASE ${caseStatement} END WHERE id IN (${idList})`
         await tx.$executeRawUnsafe(query)
       }

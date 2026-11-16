@@ -15,10 +15,82 @@ export async function getInventoryReport() {
       }
     });
 
+    // جلب مبيعات المتجر الفعلي (باستثناء الملغي والمنسوخ للعرض من المعرض POS-)
+    const storeOrderItems = await prisma.order_items.findMany({
+      where: {
+        order: {
+          status: { not: 'ملغي' },
+          id: { not: { startsWith: 'POS-' } }
+        }
+      },
+      include: { order: true }
+    });
+
+    const storeItemsByVariant = new Map<string, typeof storeOrderItems>();
+    const storeItemsByCombinedCode = new Map<string, typeof storeOrderItems>();
+
+    for (const sItem of storeOrderItems) {
+      const codeKey = (sItem.item_code || '').trim().toLowerCase();
+      const colorKey = (sItem.color || '').trim().toLowerCase();
+      const variantKey = `${codeKey}__${colorKey}`;
+
+      if (!storeItemsByVariant.has(variantKey)) {
+        storeItemsByVariant.set(variantKey, []);
+      }
+      storeItemsByVariant.get(variantKey)!.push(sItem);
+
+      if (codeKey) {
+        if (!storeItemsByCombinedCode.has(codeKey)) {
+          storeItemsByCombinedCode.set(codeKey, []);
+        }
+        storeItemsByCombinedCode.get(codeKey)!.push(sItem);
+      }
+    }
+
     const report = products.map(p => {
         const initial = p.stockQty || 0;
-        const totalSoldPieces = p.orderItems.reduce((acc, item) => acc + ((item.quantity || 0) * 4), 0);
-        const logicalCurrentStock = initial - totalSoldPieces;
+        const posSoldPieces = p.orderItems.reduce((acc, item) => acc + ((item.quantity || 0) * 4), 0);
+        const posSoldValue = p.orderItems.reduce((acc, item) => acc + ((item.quantity || 0) * 4 * (item.price || 0)), 0);
+
+        const modelKey = p.modelNo.trim().toLowerCase();
+        const colorKey = p.color.trim().toLowerCase();
+        const matchedByVariant = storeItemsByVariant.get(`${modelKey}__${colorKey}`) || [];
+        const matchedByCombined = storeItemsByCombinedCode.get(`${modelKey}-${colorKey}`) || [];
+
+        const matchedStoreMap = new Map<number, typeof storeOrderItems[0]>();
+        for (const m of [...matchedByVariant, ...matchedByCombined]) {
+          matchedStoreMap.set(m.id, m);
+        }
+        const matchedStoreItems = Array.from(matchedStoreMap.values());
+
+        const storeSoldPieces = matchedStoreItems.reduce((acc, item) => acc + (Number(item.quantity) || 0), 0);
+        const storeSoldValue = matchedStoreItems.reduce((acc, item) => acc + ((Number(item.quantity) || 0) * (Number(item.price) || 0)), 0);
+
+        const totalSoldPieces = posSoldPieces + storeSoldPieces;
+        const totalSoldValue = posSoldValue + storeSoldValue;
+
+        // قراءة الرصيد الفعلي الحقيقي المطابق لشاشة الأصناف والمتجر
+        const actualCurrentStock = p.currentStock ?? 0;
+
+        const posHistory = p.orderItems.map(item => ({
+            orderNo: item.order.orderNo,
+            date: item.order.createdAt,
+            customer: item.order.customer.name,
+            quantity: (item.quantity || 0) * 4,
+            price: item.price
+        }));
+
+        const storeHistory = matchedStoreItems.map(item => ({
+            orderNo: item.order.id,
+            date: item.order.timestamp,
+            customer: `${item.order.customer_name} (متجر)`,
+            quantity: Number(item.quantity) || 0,
+            price: Number(item.price) || 0
+        }));
+
+        const combinedHistory = [...posHistory, ...storeHistory].sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+        );
 
         return {
             id: p.id,
@@ -28,25 +100,19 @@ export async function getInventoryReport() {
             color: p.color,
             initialStock: initial,
             totalSold: totalSoldPieces,
-            currentStock: logicalCurrentStock,
-            totalSoldValue: p.orderItems.reduce((acc, item) => acc + ((item.quantity || 0) * 4 * (item.price || 0)), 0),
-            currentValue: logicalCurrentStock * (p.price || 0),
+            currentStock: actualCurrentStock,
+            totalSoldValue,
+            currentValue: actualCurrentStock * (p.price || 0),
             price: p.price,
             status: p.status,
-            history: p.orderItems.map(item => ({
-                orderNo: item.order.orderNo,
-                date: item.order.createdAt,
-                customer: item.order.customer.name,
-                quantity: (item.quantity || 0) * 4,
-                price: item.price
-            }))
+            history: combinedHistory
         };
     });
 
     const summary = {
       totalItems: report.length,
       totalInitialStock: report.reduce((acc, item) => acc + item.initialStock, 0),
-       totalInitialStockValue: report.reduce((acc, item) => acc + (item.initialStock * (item.price || 0)), 0),
+      totalInitialStockValue: report.reduce((acc, item) => acc + (item.initialStock * (item.price || 0)), 0),
       totalCurrentStock: report.reduce((acc, item) => acc + item.currentStock, 0),
       totalSoldUnits: report.reduce((acc, item) => acc + item.totalSold, 0), 
       totalSalesValue: report.reduce((acc, item) => acc + item.totalSoldValue, 0),
