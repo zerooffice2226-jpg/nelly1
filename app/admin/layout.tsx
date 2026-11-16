@@ -4,7 +4,16 @@ import { PrismaClient } from "@prisma/client";
 import Link from "next/link";
 import { authOptions } from "@/auth";
 import NotificationBell from "./NotificationBell";
-import { HomeIcon, UsersIcon, UserGroupIcon, ArchiveBoxIcon, ChartBarIcon, ShoppingCartIcon, BanknotesIcon } from '@heroicons/react/24/outline';
+import {
+  HomeIcon,
+  UsersIcon,
+  UserGroupIcon,
+  ArchiveBoxIcon,
+  ChartBarIcon,
+  ShoppingCartIcon,
+  BanknotesIcon,
+  ClipboardDocumentCheckIcon,
+} from '@heroicons/react/24/outline';
 
 const prisma = new PrismaClient();
 
@@ -60,6 +69,10 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             
             <Link href="/admin/products" className="px-3 py-2 rounded-xl hover:bg-slate-700 hover:text-yellow-400 transition-colors flex items-center gap-2">
               <ArchiveBoxIcon className="w-5 h-5" /> <span className="hidden lg:inline">الأصناف</span>
+            </Link>
+
+            <Link href="/admin/stocktakes" className="px-3 py-2 rounded-xl hover:bg-slate-700 hover:text-yellow-400 transition-colors flex items-center gap-2 whitespace-nowrap">
+              <ClipboardDocumentCheckIcon className="w-5 h-5" /> <span className="hidden lg:inline">سجلات الجرد</span>
             </Link>
             
             <Link href="/admin/reports" className="px-3 py-2 rounded-xl hover:bg-slate-700 hover:text-yellow-400 transition-colors flex items-center gap-2">
