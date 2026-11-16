@@ -186,7 +186,7 @@ export async function getAdminStockAlerts() {
 }
 
 // ==========================================
-// 3. إدارة الأوردرات (Create, Get, Delete, Update)
+// 3. إدارة الأوردرات (Create, Get, Delete, Delete All, Update)
 // ==========================================
 
 export async function createOrder(
@@ -288,7 +288,6 @@ export async function createOrder(
 
         await tx.orderItem.createMany({ data: orderItemsData })
 
-        // خصم currentStock لجميع الأصناف (OPEN و CLOSED) لتطابق المعرض مع المتجر والتقرير
         if (products.length > 0) {
           const caseStatement = products
             .map(
@@ -442,6 +441,89 @@ export async function deleteOrder(orderId: string) {
   } catch (error: unknown) {
     const errorMsg = error instanceof Error ? error.message : 'فشل حذف الطلب'
     console.error('Error deleting order:', error)
+    return { success: false, error: errorMsg }
+  }
+}
+
+export async function deleteAllOrders(
+  confirmText: string,
+  stockMode: 'RESTORE' | 'KEEP' = 'RESTORE'
+) {
+  try {
+    if (confirmText.trim() !== 'حذف') {
+      return { success: false, error: 'يجب كتابة كلمة "حذف" بشكل صحيح للتأكيد' }
+    }
+
+    const session = await getServerSession(authOptions)
+    const userId = session?.user?.image
+    if (!userId) {
+      return { success: false, error: 'غير مصرح لك بهذا الإجراء' }
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    })
+
+    if (!user || user.role !== 'ADMIN') {
+      return { success: false, error: 'حذف جميع الأوردرات متاح لمدير النظام (ADMIN) فقط' }
+    }
+
+    const result = await prisma.$transaction(
+      async (tx) => {
+        if (stockMode === 'RESTORE') {
+          const groupedItems = await tx.orderItem.groupBy({
+            by: ['productId'],
+            _sum: { quantity: true },
+          })
+
+          if (groupedItems.length > 0) {
+            const BATCH_SIZE = 200
+            for (let i = 0; i < groupedItems.length; i += BATCH_SIZE) {
+              const chunk = groupedItems.slice(i, i + BATCH_SIZE)
+              const caseStatement = chunk
+                .map(
+                  (g) =>
+                    `WHEN id = '${g.productId}' THEN "currentStock" + ${(g._sum.quantity || 0) * PIECES_PER_UNIT}`
+                )
+                .join(' ')
+              const idList = chunk.map((g) => `'${g.productId}'`).join(',')
+              await tx.$executeRawUnsafe(
+                `UPDATE "Product" SET "currentStock" = CASE ${caseStatement} END WHERE id IN (${idList})`
+              )
+            }
+          }
+        }
+
+        await tx.fulfillmentLog.deleteMany({})
+        await tx.payment.deleteMany({
+          where: { type: 'PAYMENT_COLLECTION' },
+        })
+        await tx.orderItem.deleteMany({})
+        const deleted = await tx.order.deleteMany({})
+
+        return deleted.count
+      },
+      {
+        maxWait: 20000,
+        timeout: 120000,
+      }
+    )
+
+    revalidatePath('/')
+    revalidatePath('/orders/list')
+    revalidatePath('/admin/products')
+    revalidatePath('/admin/notifications')
+    revalidatePath('/admin/reports')
+    revalidatePath('/admin/cash-management')
+    revalidatePath('/sorting')
+    revalidatePath('/sorting-cut')
+
+    return { success: true, deletedCount: result }
+  } catch (error: unknown) {
+    const errorMsg =
+      error instanceof Error ? error.message : 'فشل حذف جميع الأوردرات'
+    console.error('Error deleting all orders:', error)
     return { success: false, error: errorMsg }
   }
 }

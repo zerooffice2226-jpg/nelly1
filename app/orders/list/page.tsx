@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { getUserOrders, deleteOrder, getSettings, toggleDeferredCustomer } from '@/app/actions';
+import { getUserOrders, deleteOrder, deleteAllOrders, getSettings, toggleDeferredCustomer } from '@/app/actions';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import * as XLSX from 'xlsx';
@@ -50,6 +50,12 @@ export default function OrdersListPage() {
   const [newOrderAlert, setNewOrderAlert] = useState(false); // تنبيه الأوردر الجديد
   const [settings, setSettings] = useState<any>(null);
 
+  // حالات حذف كل الأوردرات (للأدمن فقط)
+  const [isDeleteAllModalOpen, setIsDeleteAllModalOpen] = useState(false);
+  const [deleteAllConfirmText, setDeleteAllConfirmText] = useState('');
+  const [deleteAllStockMode, setDeleteAllStockMode] = useState<'RESTORE' | 'KEEP'>('RESTORE');
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
+
   // حالات طباعة PDF
   const [pdfOrder, setPdfOrder] = useState<any>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -60,7 +66,7 @@ export default function OrdersListPage() {
 
   // --- دالة جلب البيانات (محدثة لدعم التحديث التلقائي) ---
   const fetchOrdersData = useCallback(async (isRefresh = false) => {
-    if (session?.user?.image) { // Corrected: Use .image to get user ID
+    if (session?.user?.image) {
       const res = await getUserOrders(session.user.image);
       
       if (isRefresh && res.orders.length > orders.length && orders.length > 0) {
@@ -70,14 +76,14 @@ export default function OrdersListPage() {
 
       setOrders(res.orders);
       // @ts-ignore
-      setUserRole(session.user?.role || 'EMPLOYEE'); // Corrected: Use role from session
+      setUserRole(res.userRole || session.user?.role || 'EMPLOYEE');
       if(!isRefresh) setLoading(false);
     }
   }, [session, orders.length]);
 
   // التحميل الأول للملف
   useEffect(() => {
-    if (session) { // Ensure session exists before fetching data
+    if (session) {
         fetchOrdersData();
         getSettings().then(setSettings);
     }
@@ -85,7 +91,7 @@ export default function OrdersListPage() {
 
   // --- إضافة التحديث التلقائي (كل 7 ثواني) ---
   useEffect(() => {
-    if (session) { // Ensure session exists before starting interval
+    if (session) {
         const interval = setInterval(() => {
           fetchOrdersData(true);
         }, 7000); 
@@ -96,7 +102,6 @@ export default function OrdersListPage() {
   // مراقب الطباعة
   useEffect(() => {
     if (pdfOrder && hiddenInvoiceRef.current) {
-        // حساب إجمالي الخصم للفاتورة الحالية
         const grouped = groupOrderItems(pdfOrder.items);
         const discountVal = grouped.reduce((acc: number, item: any) => {
             const totalOriginal = item.originalPrice * (item.totalQty * PIECES_PER_UNIT);
@@ -117,6 +122,26 @@ export default function OrdersListPage() {
       } else {
         alert(`فشل حذف الأوردر: ${result.error}`);
       }
+    }
+  };
+
+  const handleDeleteAllOrders = async () => {
+    if (deleteAllConfirmText.trim() !== 'حذف') {
+      alert('يرجى كتابة كلمة "حذف" بشكل صحيح للتأكيد');
+      return;
+    }
+
+    setIsDeletingAll(true);
+    const result = await deleteAllOrders(deleteAllConfirmText, deleteAllStockMode);
+    setIsDeletingAll(false);
+
+    if (result.success) {
+      setOrders([]);
+      setIsDeleteAllModalOpen(false);
+      setDeleteAllConfirmText('');
+      alert(`✅ تم حذف جميع الأوردرات بنجاح (${result.deletedCount} أوردر)`);
+    } else {
+      alert(`❌ فشل حذف الأوردرات: ${result.error}`);
     }
   };
 
@@ -239,13 +264,109 @@ export default function OrdersListPage() {
           </div>
       )}
 
-      <div className="bg-white p-4 shadow mb-4 sticky top-0 z-20 flex justify-between items-center print:hidden">
+      <div className="bg-white p-4 shadow mb-4 sticky top-0 z-20 flex justify-between items-center gap-2 print:hidden">
         <h2 className="font-bold text-lg text-gray-800 flex items-center gap-2">
             📋 سجل الأوردرات
             <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
         </h2>
-        <Link href="/" className="bg-gray-100 px-4 py-2 rounded font-bold text-sm">عودة 🏠</Link>
+        <div className="flex items-center gap-2">
+            {userRole === 'ADMIN' && orders.length > 0 && (
+                <button
+                    onClick={() => {
+                        setDeleteAllConfirmText('');
+                        setIsDeleteAllModalOpen(true);
+                    }}
+                    title="حذف كل الأوردرات دفعة واحدة (للأدمن فقط)"
+                    className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg font-bold text-xs sm:text-sm shadow flex items-center gap-1.5 transition-all active:scale-95"
+                >
+                    <span>🗑️</span>
+                    <span>حذف كل الأوردرات</span>
+                </button>
+            )}
+            <Link href="/" className="bg-gray-100 px-4 py-2 rounded font-bold text-sm">عودة 🏠</Link>
+        </div>
       </div>
+
+      {/* نافذة تأكيد حذف كل الأوردرات (للأدمن فقط) */}
+      {isDeleteAllModalOpen && userRole === 'ADMIN' && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 print:hidden">
+              <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
+                  <div className="flex justify-between items-center border-b pb-3">
+                      <h3 className="text-lg font-black text-red-700 flex items-center gap-2">
+                          <span>⚠️</span>
+                          <span>حذف جميع الأوردرات ({orders.length})</span>
+                      </h3>
+                      <button
+                          type="button"
+                          disabled={isDeletingAll}
+                          onClick={() => setIsDeleteAllModalOpen(false)}
+                          className="text-gray-400 hover:text-red-600 text-xl font-bold"
+                      >
+                          ✕
+                      </button>
+                  </div>
+
+                  <div className="bg-red-50 border border-red-200 rounded-2xl p-3.5 text-xs font-bold text-red-800 leading-relaxed">
+                      تحذير: سيتم حذف جميع الأوردرات وسجلات الصرف وتحصيلات العربون المرتبطة بها نهائياً ولا يمكن التراجع عن هذا الإجراء!
+                  </div>
+
+                  <div className="space-y-2 bg-gray-50 p-3 rounded-2xl border border-gray-100 text-xs font-bold">
+                      <span className="block text-gray-600 mb-1">خيار المخزون عند الحذف:</span>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                              type="radio"
+                              name="stockMode"
+                              checked={deleteAllStockMode === 'RESTORE'}
+                              onChange={() => setDeleteAllStockMode('RESTORE')}
+                          />
+                          <span>إرجاع كميات الأوردرات المحذوفة إلى المخزون الحالي</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                              type="radio"
+                              name="stockMode"
+                              checked={deleteAllStockMode === 'KEEP'}
+                              onChange={() => setDeleteAllStockMode('KEEP')}
+                          />
+                          <span>حذف الأوردرات فقط بدون تغيير رصيد المخزون الحالي</span>
+                      </label>
+                  </div>
+
+                  <div>
+                      <label className="block text-xs font-bold text-gray-600 mb-1.5">
+                          للتأكيد، اكتب كلمة <span className="text-red-600 font-black">حذف</span> في الخانة التالية:
+                      </label>
+                      <input
+                          type="text"
+                          value={deleteAllConfirmText}
+                          onChange={(e) => setDeleteAllConfirmText(e.target.value)}
+                          disabled={isDeletingAll}
+                          placeholder="اكتب كلمة حذف"
+                          className="w-full p-3 border-2 border-red-200 rounded-xl text-center font-black text-base outline-none focus:border-red-500"
+                      />
+                  </div>
+
+                  <div className="flex gap-2 pt-2">
+                      <button
+                          type="button"
+                          disabled={isDeletingAll}
+                          onClick={() => setIsDeleteAllModalOpen(false)}
+                          className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl font-bold text-gray-700"
+                      >
+                          إلغاء
+                      </button>
+                      <button
+                          type="button"
+                          disabled={isDeletingAll || deleteAllConfirmText.trim() !== 'حذف'}
+                          onClick={handleDeleteAllOrders}
+                          className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-black shadow-lg disabled:bg-gray-300 disabled:cursor-not-allowed"
+                      >
+                          {isDeletingAll ? '⏳ جاري الحذف...' : 'تأكيد حذف الكل 🗑️'}
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       <div className="p-4 max-w-4xl mx-auto space-y-4">
         <input 
@@ -493,7 +614,7 @@ export default function OrdersListPage() {
                             <span>{order.totalAmount.toFixed(2)} ج.م</span>
                         </div>
                         {order.deposit > 0 && (
-                            <div className="flex justify-between p-3 border-b border-.black bg-white font-bold text-gray-700">
+                            <div className="flex justify-between p-3 border-b border-black bg-white font-bold text-gray-700">
                                 <span>مدفوع:</span>
                                 <span className="text-red-600">- {order.deposit.toFixed(2)} ج.م</span>
                             </div>
@@ -612,7 +733,7 @@ export default function OrdersListPage() {
                                 <span>{pdfOrder.totalAmount.toFixed(2)} ج.م</span>
                             </div>
                             {pdfOrder.deposit > 0 && (
-                                <div className="flex justify-between p-3 border-b border-.black bg-white font-bold text-gray-700">
+                                <div className="flex justify-between p-3 border-b border-black bg-white font-bold text-gray-700">
                                     <span>مدفوع:</span>
                                     <span className="text-red-600">- {pdfOrder.deposit.toFixed(2)} ج.م</span>
                                 </div>
