@@ -38,7 +38,6 @@ export default async function Home() {
         <div className="flex items-center gap-3">
             {isAllowedInAdmin && <NotificationBell isDark={false} />}
 
-            {/* زر الفاتورة المجمعة الجديد بدلاً من الفاتورة التجريبية */}
             {isAllowedInAdmin && <BulkOrderModal userId={user.id} />}
 
             {isAllowedInAdmin && (
@@ -63,10 +62,16 @@ export default async function Home() {
           <span className="text-5xl bg-white/20 w-16 h-16 flex items-center justify-center rounded-2xl">+</span>
         </Link>
 
-        <div className={`grid ${user?.role === 'EMPLOYEE' ? 'grid-cols-1' : 'grid-cols-2'} gap-4`}>
+        <div className={`grid ${user?.role === 'EMPLOYEE' ? 'grid-cols-2' : 'grid-cols-3'} gap-4`}>
           <Link href="/orders/list" className="bg-white p-6 rounded-3xl shadow-sm text-gray-700 font-bold border border-gray-100 text-center hover:bg-gray-50 flex flex-col justify-center items-center gap-3 transition-all hover:-translate-y-1">
              <span className="text-4xl bg-gray-50 p-3 rounded-2xl">📝</span>
              <span>الأوردرات السابقة</span>
+          </Link>
+
+          {/* أيقونة الجرد متاحة للجميع (موظف، محاسب، أدمن، صاحب الشركة) */}
+          <Link href="/stocktake/new" className="bg-white p-6 rounded-3xl shadow-sm text-teal-800 font-bold border border-teal-100 text-center hover:bg-teal-50 flex flex-col justify-center items-center gap-3 transition-all hover:-translate-y-1">
+             <span className="text-4xl bg-teal-50 p-3 rounded-2xl">📋</span>
+             <span>جرد المخزون</span>
           </Link>
 
           {user?.role !== 'EMPLOYEE' && (
