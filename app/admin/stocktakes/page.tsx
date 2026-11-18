@@ -1,13 +1,29 @@
 'use client'
 
-import { useState, useEffect, useMemo, useTransition } from 'react'
+import { useState, useEffect, useMemo, useTransition, useCallback } from 'react'
 import {
   getStocktakes,
   applyStocktake,
   rejectStocktake,
   deleteStocktake,
   updateStocktakeItem,
+  DuplicateResolutionMode,
 } from '@/app/stocktake-actions'
+
+interface PreviousAppliedInfo {
+  stocktakeId: string
+  countNo: number
+  userName: string
+  date: string
+  countedQty: number
+}
+
+interface OtherPendingInfo {
+  stocktakeId: string
+  countNo: number
+  userName: string
+  countedQty: number
+}
 
 interface StocktakeItemRecord {
   id: string
@@ -20,6 +36,10 @@ interface StocktakeItemRecord {
   countedQty: number
   systemQty: number
   isNewItem: boolean
+  liveCurrentStock: number
+  liveStockQty: number
+  previousApplied: PreviousAppliedInfo | null
+  otherPending: OtherPendingInfo[]
 }
 
 interface StocktakeRecord {
@@ -32,6 +52,8 @@ interface StocktakeRecord {
   user: { id: string; name: string; code: string; role: string }
   appliedBy: { id: string; name: string; code: string } | null
   items: StocktakeItemRecord[]
+  appliedDuplicatesCount: number
+  pendingDuplicatesCount: number
 }
 
 export default function AdminStocktakesPage() {
@@ -39,28 +61,38 @@ export default function AdminStocktakesPage() {
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING' | 'APPLIED' | 'REJECTED'>('ALL')
   const [searchTerm, setSearchTerm] = useState('')
-  const [selected, setSelected] = useState<StocktakeRecord | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [itemModes, setItemModes] = useState<Record<string, DuplicateResolutionMode>>({})
   const [isPending, startTransition] = useTransition()
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     const res = await getStocktakes()
     if (res.success) {
-      setStocktakes(res.data)
-      if (selected) {
-        const refreshed = (res.data as StocktakeRecord[]).find(
-          (s) => s.id === selected.id
-        )
-        setSelected(refreshed || null)
-      }
+      setStocktakes(res.data as StocktakeRecord[])
     }
     setLoading(false)
-  }
+  }, [])
 
   useEffect(() => {
     loadData()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [loadData])
+
+  const selected = useMemo(
+    () => stocktakes.find((s) => s.id === selectedId) || null,
+    [stocktakes, selectedId]
+  )
+
+  const openStocktakeModal = (st: StocktakeRecord) => {
+    // تعيين افتراضي 'REPLACE' للمكررات عند الفتح
+    const initialModes: Record<string, DuplicateResolutionMode> = {}
+    st.items.forEach((item) => {
+      const key = `${item.modelNo.trim().toLowerCase()}__${item.color.trim().toLowerCase()}`
+      initialModes[key] = 'REPLACE'
+    })
+    setItemModes(initialModes)
+    setSelectedId(st.id)
+  }
 
   const filtered = useMemo(() => {
     return stocktakes.filter((s) => {
@@ -80,20 +112,59 @@ export default function AdminStocktakesPage() {
     })
   }, [stocktakes, statusFilter, searchTerm])
 
-  const handleApply = (stocktake: StocktakeRecord) => {
+  const setAllDuplicatesMode = (mode: DuplicateResolutionMode) => {
+    if (!selected) return
+    const next: Record<string, DuplicateResolutionMode> = { ...itemModes }
+    selected.items.forEach((item) => {
+      if (item.previousApplied) {
+        const key = `${item.modelNo.trim().toLowerCase()}__${item.color.trim().toLowerCase()}`
+        next[key] = mode
+      }
+    })
+    setItemModes(next)
+  }
+
+  const handleApplyFromCard = (stocktake: StocktakeRecord) => {
+    // إذا كانت الفاتورة تحتوي على أصناف مجردة مسبقاً، نفتح التفاصيل أولاً ليختار الأدمن بين الزيادة أو اعتماد الحالي
+    if (stocktake.appliedDuplicatesCount > 0) {
+      openStocktakeModal(stocktake)
+      return
+    }
+    executeApply(stocktake, {})
+  }
+
+  const executeApply = (
+    stocktake: StocktakeRecord,
+    modesToUse: Record<string, DuplicateResolutionMode>
+  ) => {
+    const duplicateItems = stocktake.items.filter((i) => i.previousApplied)
+    let addCount = 0
+    let replaceCount = 0
+
+    duplicateItems.forEach((i) => {
+      const key = `${i.modelNo.trim().toLowerCase()}__${i.color.trim().toLowerCase()}`
+      if (modesToUse[key] === 'ADD') addCount++
+      else replaceCount++
+    })
+
+    const extraDuplicateSummary =
+      duplicateItems.length > 0
+        ? `\n\nتنبيه الأصناف المكررة (${duplicateItems.length} صنف):\n- زيادة على الجرد السابق: ${addCount}\n- اعتماد العدد الحالي فقط: ${replaceCount}`
+        : ''
+
     if (
       !confirm(
-        `هل أنت متأكد من اعتماد فاتورة الجرد #${stocktake.countNo} (بواسطة: ${stocktake.user.name})؟\n\nسيتم:\n1) اعتماد الكميات المجردة كعدد أولي وحالي للأصناف.\n2) إضافة الأصناف الجديدة غير الموجودة تلقائياً لجدول الأصناف.`
+        `هل أنت متأكد من اعتماد فاتورة الجرد #${stocktake.countNo} (بواسطة: ${stocktake.user.name})؟${extraDuplicateSummary}`
       )
     ) {
       return
     }
 
     startTransition(async () => {
-      const res = await applyStocktake(stocktake.id)
+      const res = await applyStocktake(stocktake.id, modesToUse)
       if (res.success) {
         alert(
-          `✅ تم اعتماد وتطبيق الجرد بنجاح!\n- أصناف تم تحديثها: ${res.updatedCount}\n- أصناف جديدة تم إضافتها: ${res.createdCount}`
+          `✅ تم اعتماد وتطبيق الجرد بنجاح!\n- اعتماد بالعدد الحالي: ${res.updatedCount}\n- زيادة على الرصيد السابق: ${res.addedToPreviousCount}\n- أصناف جديدة تم إضافتها: ${res.createdCount}`
         )
         await loadData()
       } else {
@@ -119,7 +190,7 @@ export default function AdminStocktakesPage() {
     startTransition(async () => {
       const res = await deleteStocktake(id)
       if (res.success) {
-        if (selected?.id === id) setSelected(null)
+        if (selectedId === id) setSelectedId(null)
         await loadData()
       } else {
         alert(res.error)
@@ -184,7 +255,7 @@ export default function AdminStocktakesPage() {
             📋 سجلات فواتير الجرد
           </h1>
           <p className="text-xs font-bold text-gray-400 mt-1">
-            مراجعة فواتير الجرد المرفوعة من الموظفين واعتمادها كعدد أولي للأصناف
+            مراجعة فواتير الجرد المرفوعة من الموظفين وكشف المكرر مع الفواتير المعتمدة السابقة
           </p>
         </div>
 
@@ -244,7 +315,11 @@ export default function AdminStocktakesPage() {
             return (
               <div
                 key={st.id}
-                className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex flex-col justify-between gap-4 hover:shadow-md transition-shadow"
+                className={`bg-white rounded-2xl p-5 shadow-sm border flex flex-col justify-between gap-4 hover:shadow-md transition-shadow ${
+                  st.appliedDuplicatesCount > 0 && st.status === 'PENDING'
+                    ? 'border-amber-400 ring-2 ring-amber-100'
+                    : 'border-gray-100'
+                }`}
               >
                 <div className="space-y-2.5">
                   <div className="flex justify-between items-start gap-2">
@@ -258,6 +333,19 @@ export default function AdminStocktakesPage() {
                     </div>
                     {getStatusBadge(st.status)}
                   </div>
+
+                  {/* إشعارات التكرار على بطاقة الفاتورة */}
+                  {st.appliedDuplicatesCount > 0 && (
+                    <div className="bg-amber-50 border border-amber-300 text-amber-900 px-3 py-2 rounded-xl text-xs font-black">
+                      ⚠️ تنبيه: يحتوي على {st.appliedDuplicatesCount} صنف تم جرده في فواتير معتمدة سابقة
+                    </div>
+                  )}
+
+                  {st.pendingDuplicatesCount > 0 && st.status === 'PENDING' && (
+                    <div className="bg-blue-50 border border-blue-200 text-blue-800 px-3 py-1.5 rounded-xl text-[11px] font-bold">
+                      🔁 {st.pendingDuplicatesCount} صنف موجود أيضاً في فاتورة قيد المراجعة أخرى
+                    </div>
+                  )}
 
                   <div className="bg-gray-50 p-3 rounded-xl text-xs space-y-1">
                     <div>
@@ -297,19 +385,25 @@ export default function AdminStocktakesPage() {
 
                 <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-100">
                   <button
-                    onClick={() => setSelected(st)}
+                    onClick={() => openStocktakeModal(st)}
                     className="flex-1 py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-black"
                   >
-                    👁️ التفاصيل والتعديل
+                    👁️ التفاصيل والقرار
                   </button>
 
                   {st.status === 'PENDING' && (
                     <button
                       disabled={isPending}
-                      onClick={() => handleApply(st)}
-                      className="flex-1 py-2.5 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs font-black shadow disabled:opacity-50"
+                      onClick={() => handleApplyFromCard(st)}
+                      className={`flex-1 py-2.5 px-3 rounded-xl text-white text-xs font-black shadow disabled:opacity-50 ${
+                        st.appliedDuplicatesCount > 0
+                          ? 'bg-amber-600 hover:bg-amber-700'
+                          : 'bg-teal-600 hover:bg-teal-700'
+                      }`}
                     >
-                      ✅ اعتماد وتطبيق
+                      {st.appliedDuplicatesCount > 0
+                        ? '⚠️ مراجعة واعتماد'
+                        : '✅ اعتماد وتطبيق'}
                     </button>
                   )}
 
@@ -332,10 +426,10 @@ export default function AdminStocktakesPage() {
       {/* نافذة تفاصيل ومراجعة فاتورة الجرد */}
       {selected && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-          <div className="bg-white w-full max-w-4xl max-h-[92vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
+          <div className="bg-white w-full max-w-5xl max-h-[92vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden">
             <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50">
               <div>
-                <h2 className="text-xl font-black text-gray-800 flex items-center gap-2">
+                <h2 className="text-xl font-black text-gray-800 flex items-center gap-2 flex-wrap">
                   <span>تفاصيل فاتورة الجرد #{selected.countNo}</span>
                   {getStatusBadge(selected.status)}
                 </h2>
@@ -345,7 +439,7 @@ export default function AdminStocktakesPage() {
                 </p>
               </div>
               <button
-                onClick={() => setSelected(null)}
+                onClick={() => setSelectedId(null)}
                 className="text-gray-400 hover:text-red-500 text-2xl font-bold p-1"
               >
                 ✕
@@ -353,51 +447,112 @@ export default function AdminStocktakesPage() {
             </div>
 
             <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4">
+              {/* شريط تنبيه وإجراءات سريعة للأصناف المكررة */}
+              {selected.appliedDuplicatesCount > 0 && (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 space-y-3">
+                  <div className="text-sm font-black text-amber-900">
+                    ⚠️ تنبيه: الأصناف المميزة باللون البرتقالي تم جردها واعتمادها في فواتير سابقة!
+                  </div>
+                  {selected.status === 'PENDING' && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-bold text-amber-800">
+                        اختيار جماعي للمكررات:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setAllDuplicatesMode('ADD')}
+                        className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black shadow-sm"
+                      >
+                        ➕ تعيين الكل: زيادة على الجرد السابق
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAllDuplicatesMode('REPLACE')}
+                        className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-black shadow-sm"
+                      >
+                        🔄 تعيين الكل: اعتماد الحالي فقط
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-right border-collapse">
                   <thead className="bg-gray-100 text-gray-700 text-xs">
                     <tr>
                       <th className="p-3 border">الموديل</th>
                       <th className="p-3 border">اللون</th>
-                      <th className="p-3 border">النوع</th>
-                      <th className="p-3 border text-center">الدفتري السابق</th>
+                      <th className="p-3 border">الحالة / التكرار</th>
+                      <th className="p-3 border text-center">الرصيد الحالي</th>
                       <th className="p-3 border text-center">المجرد (قطعة)</th>
                       <th className="p-3 border text-center">الفرق</th>
+                      {selected.status === 'PENDING' &&
+                        selected.appliedDuplicatesCount > 0 && (
+                          <th className="p-3 border text-center">قرار المكرر</th>
+                        )}
                       <th className="p-3 border text-center">السعر</th>
                     </tr>
                   </thead>
                   <tbody>
                     {selected.items.map((item) => {
-                      const diff = item.countedQty - item.systemQty
+                      const key = `${item.modelNo.trim().toLowerCase()}__${item.color.trim().toLowerCase()}`
+                      const mode: DuplicateResolutionMode = itemModes[key] || 'REPLACE'
+                      const isDup = Boolean(item.previousApplied)
+                      const diff = item.countedQty - item.liveCurrentStock
+                      const expectedAfterApply =
+                        mode === 'ADD'
+                          ? item.liveCurrentStock + item.countedQty
+                          : item.countedQty
+
                       return (
                         <tr
                           key={item.id}
                           className={`border-b ${
-                            item.isNewItem ? 'bg-indigo-50/50' : ''
+                            isDup
+                              ? 'bg-amber-50/90'
+                              : item.isNewItem
+                              ? 'bg-indigo-50/50'
+                              : ''
                           }`}
                         >
                           <td className="p-3 border font-black">
                             {item.modelNo}
                             {item.description && (
-                              <span className="block text-[11px] font-normal text-gray-400">
+                              <span className="block text-[11px] font-normal text-gray-500">
                                 {item.description}
                               </span>
                             )}
                           </td>
                           <td className="p-3 border font-bold">{item.color}</td>
-                          <td className="p-3 border text-xs">
+                          <td className="p-3 border text-xs space-y-1">
                             {item.isNewItem ? (
-                              <span className="bg-indigo-600 text-white px-2 py-0.5 rounded-full font-bold">
+                              <span className="bg-indigo-600 text-white px-2 py-0.5 rounded-full font-bold inline-block">
                                 جديد ✨
                               </span>
                             ) : (
-                              <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-bold">
+                              <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-bold inline-block">
                                 موجود
                               </span>
                             )}
+
+                            {item.previousApplied && (
+                              <div className="bg-amber-200/70 text-amber-950 p-1.5 rounded-lg text-[11px] font-bold">
+                                🔁 مكرر مع فاتورة #{item.previousApplied.countNo} (
+                                {item.previousApplied.userName} • كمية:{' '}
+                                {item.previousApplied.countedQty})
+                              </div>
+                            )}
+
+                            {item.otherPending.length > 0 && (
+                              <div className="bg-blue-100 text-blue-900 p-1 rounded-lg text-[10px] font-bold">
+                                متداخل مع فاتورة قيد المراجعة #
+                                {item.otherPending.map((p) => p.countNo).join(', #')}
+                              </div>
+                            )}
                           </td>
-                          <td className="p-3 border text-center text-gray-500 font-mono">
-                            {item.isNewItem ? '-' : item.systemQty}
+                          <td className="p-3 border text-center text-gray-600 font-mono font-bold">
+                            {item.isNewItem ? '-' : item.liveCurrentStock}
                           </td>
                           <td className="p-3 border text-center font-black">
                             {selected.status === 'PENDING' ? (
@@ -411,7 +566,7 @@ export default function AdminStocktakesPage() {
                                     handleItemEdit(item, nextVal, item.price)
                                   }
                                 }}
-                                className="w-20 p-1.5 border rounded-lg text-center font-black"
+                                className="w-20 p-1.5 border rounded-lg text-center font-black bg-white"
                               />
                             ) : (
                               item.countedQty
@@ -432,6 +587,57 @@ export default function AdminStocktakesPage() {
                               ? `+${diff}`
                               : diff}
                           </td>
+
+                          {selected.status === 'PENDING' &&
+                            selected.appliedDuplicatesCount > 0 && (
+                              <td className="p-3 border text-center">
+                                {isDup ? (
+                                  <div className="flex flex-col gap-1.5 min-w-[165px]">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setItemModes((prev) => ({
+                                          ...prev,
+                                          [key]: 'ADD',
+                                        }))
+                                      }
+                                      className={`px-2 py-1.5 rounded-lg text-[11px] font-black border transition-all ${
+                                        mode === 'ADD'
+                                          ? 'bg-emerald-600 text-white border-emerald-600 shadow'
+                                          : 'bg-white text-gray-700 border-gray-300'
+                                      }`}
+                                    >
+                                      ➕ زيادة على السابق
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setItemModes((prev) => ({
+                                          ...prev,
+                                          [key]: 'REPLACE',
+                                        }))
+                                      }
+                                      className={`px-2 py-1.5 rounded-lg text-[11px] font-black border transition-all ${
+                                        mode === 'REPLACE'
+                                          ? 'bg-blue-600 text-white border-blue-600 shadow'
+                                          : 'bg-white text-gray-700 border-gray-300'
+                                      }`}
+                                    >
+                                      🔄 اعتماد الحالي فقط
+                                    </button>
+                                    <span className="text-[10px] font-bold text-gray-600">
+                                      الناتج النهائي:{' '}
+                                      <b className="text-slate-900">
+                                        {expectedAfterApply} قطعة
+                                      </b>
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-gray-400">—</span>
+                                )}
+                              </td>
+                            )}
+
                           <td className="p-3 border text-center">
                             {selected.status === 'PENDING' && item.isNewItem ? (
                               <input
@@ -444,7 +650,7 @@ export default function AdminStocktakesPage() {
                                     handleItemEdit(item, item.countedQty, nextPrice)
                                   }
                                 }}
-                                className="w-20 p-1.5 border rounded-lg text-center font-bold"
+                                className="w-20 p-1.5 border rounded-lg text-center font-bold bg-white"
                               />
                             ) : (
                               `${item.price} ج.م`
@@ -478,7 +684,7 @@ export default function AdminStocktakesPage() {
                     </button>
                     <button
                       disabled={isPending}
-                      onClick={() => handleApply(selected)}
+                      onClick={() => executeApply(selected, itemModes)}
                       className="px-6 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-black text-sm shadow-lg"
                     >
                       {isPending
@@ -488,7 +694,7 @@ export default function AdminStocktakesPage() {
                   </>
                 )}
                 <button
-                  onClick={() => setSelected(null)}
+                  onClick={() => setSelectedId(null)}
                   className="px-5 py-2.5 rounded-xl bg-gray-200 text-gray-700 font-bold text-sm"
                 >
                   إغلاق

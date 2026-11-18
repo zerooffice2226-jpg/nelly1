@@ -7,6 +7,13 @@ import { authOptions } from '@/auth'
 
 const prisma = new PrismaClient()
 
+export interface LastAppliedCountInfo {
+  countNo: number
+  userName: string
+  date: string
+  countedQty: number
+}
+
 export interface StocktakeProductOption {
   id: string
   modelNo: string
@@ -17,6 +24,7 @@ export interface StocktakeProductOption {
   currentStock: number
   stockQty: number
   status: string
+  lastAppliedCount: LastAppliedCountInfo | null
 }
 
 export interface CreateStocktakeItemInput {
@@ -26,9 +34,11 @@ export interface CreateStocktakeItemInput {
   description?: string
   price?: number
   status?: string
-  countedQty: number // بالقطع
+  countedQty: number
   isNewItem: boolean
 }
+
+export type DuplicateResolutionMode = 'ADD' | 'REPLACE'
 
 async function getAuthenticatedUser() {
   const session = await getServerSession(authOptions)
@@ -41,35 +51,71 @@ async function getAuthenticatedUser() {
   })
 }
 
-// 1. جلب الأصناف لشاشة الجرد (للبحث والسكان)
+// 1. جلب الأصناف لشاشة الجرد (مع معرفة آخر جرد معتمد لكل صنف)
 export async function getProductsForStocktake(): Promise<StocktakeProductOption[]> {
   try {
     const user = await getAuthenticatedUser()
     if (!user) return []
 
-    const products = await prisma.product.findMany({
-      orderBy: [{ modelNo: 'asc' }, { color: 'asc' }],
-      select: {
-        id: true,
-        modelNo: true,
-        color: true,
-        description: true,
-        material: true,
-        price: true,
-        currentStock: true,
-        stockQty: true,
-        status: true,
-      },
+    const [products, appliedStocktakes] = await Promise.all([
+      prisma.product.findMany({
+        orderBy: [{ modelNo: 'asc' }, { color: 'asc' }],
+        select: {
+          id: true,
+          modelNo: true,
+          color: true,
+          description: true,
+          material: true,
+          price: true,
+          currentStock: true,
+          stockQty: true,
+          status: true,
+        },
+      }),
+      prisma.stocktake.findMany({
+        where: { status: 'APPLIED' },
+        orderBy: [{ appliedAt: 'desc' }, { createdAt: 'desc' }],
+        include: {
+          user: { select: { name: true } },
+          items: {
+            select: { modelNo: true, color: true, countedQty: true },
+          },
+        },
+      }),
+    ])
+
+    const lastAppliedMap = new Map<string, LastAppliedCountInfo>()
+    for (const st of appliedStocktakes) {
+      const dateStr = (st.appliedAt || st.createdAt).toISOString()
+      for (const item of st.items) {
+        const key = `${item.modelNo.trim().toLowerCase()}__${item.color.trim().toLowerCase()}`
+        if (!lastAppliedMap.has(key)) {
+          lastAppliedMap.set(key, {
+            countNo: st.countNo,
+            userName: st.user.name,
+            date: dateStr,
+            countedQty: item.countedQty,
+          })
+        }
+      }
+    }
+
+    const enriched: StocktakeProductOption[] = products.map((p) => {
+      const key = `${p.modelNo.trim().toLowerCase()}__${p.color.trim().toLowerCase()}`
+      return {
+        ...p,
+        lastAppliedCount: lastAppliedMap.get(key) || null,
+      }
     })
 
-    return JSON.parse(JSON.stringify(products))
+    return JSON.parse(JSON.stringify(enriched))
   } catch (error) {
     console.error('Error fetching products for stocktake:', error)
     return []
   }
 }
 
-// 2. حفظ فاتورة الجرد (متاح لجميع الموظفين والمديرين والمحاسبين)
+// 2. حفظ فاتورة الجرد (مع إرجاع تنبيه إن وجدت أصناف مجردة في فواتير معتمدة سابقة)
 export async function createStocktake(payload: {
   items: CreateStocktakeItemInput[]
   notes?: string
@@ -88,24 +134,41 @@ export async function createStocktake(payload: {
       .map((i) => i.productId)
       .filter((id): id is string => Boolean(id))
 
-    const dbProducts = productIds.length
-      ? await prisma.product.findMany({
-          where: { id: { in: productIds } },
-          select: {
-            id: true,
-            modelNo: true,
-            color: true,
-            description: true,
-            price: true,
-            currentStock: true,
-            status: true,
-          },
-        })
-      : []
+    const [dbProducts, appliedStocktakes] = await Promise.all([
+      productIds.length
+        ? prisma.product.findMany({
+            where: { id: { in: productIds } },
+            select: {
+              id: true,
+              modelNo: true,
+              color: true,
+              description: true,
+              price: true,
+              currentStock: true,
+              status: true,
+            },
+          })
+        : Promise.resolve([]),
+      prisma.stocktake.findMany({
+        where: { status: 'APPLIED' },
+        select: {
+          countNo: true,
+          items: { select: { modelNo: true, color: true } },
+        },
+      }),
+    ])
 
     const dbProductMap = new Map(dbProducts.map((p) => [p.id, p]))
+    const appliedKeysMap = new Map<string, number>()
+    for (const st of appliedStocktakes) {
+      for (const item of st.items) {
+        const k = `${item.modelNo.trim().toLowerCase()}__${item.color.trim().toLowerCase()}`
+        if (!appliedKeysMap.has(k)) {
+          appliedKeysMap.set(k, st.countNo)
+        }
+      }
+    }
 
-    // تجميع البنود المتكررة لنفس (الموديل + اللون) داخل نفس فاتورة الجرد
     const mergedItemsMap = new Map<
       string,
       {
@@ -121,6 +184,8 @@ export async function createStocktake(payload: {
       }
     >()
 
+    const duplicateApprovedModels: string[] = []
+
     for (const raw of payload.items) {
       const modelNo = String(raw.modelNo || '').trim()
       const color = String(raw.color || '').trim()
@@ -131,7 +196,17 @@ export async function createStocktake(payload: {
       }
 
       const dbProd = raw.productId ? dbProductMap.get(raw.productId) : undefined
-      const key = `${modelNo.toLowerCase()}__${color.toLowerCase()}`
+      const finalModel = dbProd ? dbProd.modelNo : modelNo
+      const finalColor = dbProd ? dbProd.color : color
+      const key = `${finalModel.toLowerCase()}__${finalColor.toLowerCase()}`
+
+      const prevCountNo = appliedKeysMap.get(key)
+      if (prevCountNo !== undefined) {
+        const label = `${finalModel} (${finalColor}) - فاتورة #${prevCountNo}`
+        if (!duplicateApprovedModels.includes(label)) {
+          duplicateApprovedModels.push(label)
+        }
+      }
 
       const existing = mergedItemsMap.get(key)
       if (existing) {
@@ -139,8 +214,8 @@ export async function createStocktake(payload: {
       } else {
         mergedItemsMap.set(key, {
           productId: dbProd ? dbProd.id : null,
-          modelNo: dbProd ? dbProd.modelNo : modelNo,
-          color: dbProd ? dbProd.color : color,
+          modelNo: finalModel,
+          color: finalColor,
           description: dbProd
             ? dbProd.description || ''
             : String(raw.description || '').trim(),
@@ -179,6 +254,7 @@ export async function createStocktake(payload: {
       success: true,
       id: created.id,
       countNo: created.countNo,
+      duplicateApprovedModels,
     }
   } catch (error: unknown) {
     const message =
@@ -188,7 +264,7 @@ export async function createStocktake(payload: {
   }
 }
 
-// 3. جلب سجلات فواتير الجرد (لوحة التحكم فقط)
+// 3. جلب سجلات فواتير الجرد مع كشف التكرارات مع الفواتير المعتمدة السابقة
 export async function getStocktakes() {
   try {
     const user = await getAuthenticatedUser()
@@ -203,14 +279,104 @@ export async function getStocktakes() {
         appliedBy: { select: { id: true, name: true, code: true } },
         items: {
           orderBy: [{ modelNo: 'asc' }, { color: 'asc' }],
+          include: {
+            product: {
+              select: { id: true, currentStock: true, stockQty: true },
+            },
+          },
         },
       },
       take: 200,
     })
 
+    // بناء فهرس لجميع الفواتير المعتمدة وغير المعتمدة لكشف التكرار
+    const appliedHistoryByKey = new Map<
+      string,
+      Array<{
+        stocktakeId: string
+        countNo: number
+        userName: string
+        date: Date
+        countedQty: number
+      }>
+    >()
+
+    const pendingByKey = new Map<
+      string,
+      Array<{
+        stocktakeId: string
+        countNo: number
+        userName: string
+        countedQty: number
+      }>
+    >()
+
+    for (const st of stocktakes) {
+      for (const item of st.items) {
+        const key = `${item.modelNo.trim().toLowerCase()}__${item.color.trim().toLowerCase()}`
+        if (st.status === 'APPLIED') {
+          if (!appliedHistoryByKey.has(key)) appliedHistoryByKey.set(key, [])
+          appliedHistoryByKey.get(key)!.push({
+            stocktakeId: st.id,
+            countNo: st.countNo,
+            userName: st.user.name,
+            date: st.appliedAt || st.createdAt,
+            countedQty: item.countedQty,
+          })
+        } else if (st.status === 'PENDING') {
+          if (!pendingByKey.has(key)) pendingByKey.set(key, [])
+          pendingByKey.get(key)!.push({
+            stocktakeId: st.id,
+            countNo: st.countNo,
+            userName: st.user.name,
+            countedQty: item.countedQty,
+          })
+        }
+      }
+    }
+
+    const enriched = stocktakes.map((st) => {
+      let appliedDuplicatesCount = 0
+      let pendingDuplicatesCount = 0
+
+      const enrichedItems = st.items.map((item) => {
+        const key = `${item.modelNo.trim().toLowerCase()}__${item.color.trim().toLowerCase()}`
+        const appliedList = (appliedHistoryByKey.get(key) || []).filter((h) => {
+          if (h.stocktakeId === st.id) return false
+          if (st.status === 'APPLIED') {
+            return new Date(h.date).getTime() <= new Date(st.appliedAt || st.createdAt).getTime()
+          }
+          return true
+        })
+
+        const previousApplied = appliedList.length > 0 ? appliedList[0] : null
+        const otherPending = (pendingByKey.get(key) || []).filter(
+          (p) => p.stocktakeId !== st.id
+        )
+
+        if (previousApplied) appliedDuplicatesCount++
+        if (otherPending.length > 0) pendingDuplicatesCount++
+
+        return {
+          ...item,
+          liveCurrentStock: item.product ? item.product.currentStock : item.systemQty,
+          liveStockQty: item.product ? item.product.stockQty : item.systemQty,
+          previousApplied,
+          otherPending,
+        }
+      })
+
+      return {
+        ...st,
+        items: enrichedItems,
+        appliedDuplicatesCount,
+        pendingDuplicatesCount,
+      }
+    })
+
     return {
       success: true,
-      data: JSON.parse(JSON.stringify(stocktakes)),
+      data: JSON.parse(JSON.stringify(enriched)),
     }
   } catch (error) {
     console.error('Error fetching stocktakes:', error)
@@ -260,8 +426,11 @@ export async function updateStocktakeItem(
   }
 }
 
-// 5. اعتماد فاتورة الجرد وتطبيقها على الأصناف كعدد أولي وحالي
-export async function applyStocktake(stocktakeId: string) {
+// 5. اعتماد فاتورة الجرد وتطبيقها (مع دعم اختيار الزيادة على السابق أو اعتماد الحالي للمكرر)
+export async function applyStocktake(
+  stocktakeId: string,
+  itemModes: Record<string, DuplicateResolutionMode> = {}
+) {
   try {
     const user = await getAuthenticatedUser()
     if (!user || !['ADMIN', 'OWNER', 'ACCOUNTANT'].includes(user.role)) {
@@ -288,16 +457,17 @@ export async function applyStocktake(stocktakeId: string) {
           throw new Error('فاتورة الجرد فارغة')
         }
 
-        // تجميع الكميات لكل (موديل + لون)
         const aggregated = new Map<
           string,
           {
+            key: string
             modelNo: string
             color: string
             description: string
             price: number
             status: string
             countedQty: number
+            mode: DuplicateResolutionMode
           }
         >()
 
@@ -305,22 +475,31 @@ export async function applyStocktake(stocktakeId: string) {
           const m = item.modelNo.trim()
           const c = item.color.trim()
           const key = `${m.toLowerCase()}__${c.toLowerCase()}`
+          const chosenMode: DuplicateResolutionMode =
+            itemModes[key] === 'ADD' || itemModes[item.id] === 'ADD'
+              ? 'ADD'
+              : 'REPLACE'
+
           const current = aggregated.get(key)
           if (current) {
             current.countedQty += item.countedQty
+            if (chosenMode === 'ADD') current.mode = 'ADD'
           } else {
             aggregated.set(key, {
+              key,
               modelNo: m,
               color: c,
               description: item.description || '',
               price: item.price || 0,
               status: item.status === 'CLOSED' ? 'CLOSED' : 'OPEN',
               countedQty: item.countedQty,
+              mode: chosenMode,
             })
           }
         }
 
         let updatedCount = 0
+        let addedToPreviousCount = 0
         let createdCount = 0
 
         for (const entry of aggregated.values()) {
@@ -332,14 +511,25 @@ export async function applyStocktake(stocktakeId: string) {
           })
 
           if (existingProduct) {
-            await tx.product.update({
-              where: { id: existingProduct.id },
-              data: {
-                stockQty: entry.countedQty,
-                currentStock: entry.countedQty,
-              },
-            })
-            updatedCount++
+            if (entry.mode === 'ADD') {
+              await tx.product.update({
+                where: { id: existingProduct.id },
+                data: {
+                  stockQty: existingProduct.stockQty + entry.countedQty,
+                  currentStock: existingProduct.currentStock + entry.countedQty,
+                },
+              })
+              addedToPreviousCount++
+            } else {
+              await tx.product.update({
+                where: { id: existingProduct.id },
+                data: {
+                  stockQty: entry.countedQty,
+                  currentStock: entry.countedQty,
+                },
+              })
+              updatedCount++
+            }
           } else {
             const finalMaterial = `${entry.modelNo}${entry.color}`.trim()
             await tx.product.create({
@@ -367,7 +557,7 @@ export async function applyStocktake(stocktakeId: string) {
           },
         })
 
-        return { updatedCount, createdCount }
+        return { updatedCount, addedToPreviousCount, createdCount }
       },
       { maxWait: 15000, timeout: 90000 }
     )
@@ -382,6 +572,7 @@ export async function applyStocktake(stocktakeId: string) {
     return {
       success: true,
       updatedCount: result.updatedCount,
+      addedToPreviousCount: result.addedToPreviousCount,
       createdCount: result.createdCount,
     }
   } catch (error: unknown) {

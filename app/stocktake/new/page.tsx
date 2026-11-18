@@ -2,13 +2,13 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useSession } from 'next-auth/react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
+import { useRouter, usePathname } from 'next/navigation'
 import { Scanner } from '@yudiel/react-qr-scanner'
 import {
   getProductsForStocktake,
   createStocktake,
   StocktakeProductOption,
+  LastAppliedCountInfo,
 } from '@/app/stocktake-actions'
 
 const PIECES_PER_SERIA = 4
@@ -24,31 +24,52 @@ interface StocktakeRow {
   countedPieces: number
   systemQty: number
   isNewItem: boolean
+  lastAppliedCount: LastAppliedCountInfo | null
+}
+
+interface PendingDuplicatePrompt {
+  candidate: Omit<StocktakeRow, 'rowKey'>
+  existingRowKey: string
+  existingPieces: number
+}
+
+interface StocktakeDraft {
+  rows: StocktakeRow[]
+  notes: string
+  unitMode: 'PIECE' | 'SERIA'
+  updatedAt: string
 }
 
 export default function NewStocktakePage() {
   const { data: session, status: authStatus } = useSession()
   const router = useRouter()
+  const pathname = usePathname()
+
+  const userId = session?.user?.image || 'anon'
+  const draftStorageKey = `stocktake_draft_v1_${userId}`
 
   const [allProducts, setAllProducts] = useState<StocktakeProductOption[]>([])
   const [loadingProducts, setLoadingProducts] = useState(true)
 
-  // وحدة الإدخال: قطعة أو سرية (×4)
   const [unitMode, setUnitMode] = useState<'PIECE' | 'SERIA'>('PIECE')
-
-  // البحث والسكان
   const [searchTerm, setSearchTerm] = useState('')
   const [showScanner, setShowScanner] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
-
-  // اختيار ألوان الموديل الظاهر وكتابة العدد
   const [qtyInputs, setQtyInputs] = useState<Record<string, string>>({})
 
-  // سلة الجرد
   const [rows, setRows] = useState<StocktakeRow[]>([])
   const [notes, setNotes] = useState('')
+  const [draftRestoredAt, setDraftRestoredAt] = useState<string | null>(null)
+  const [isDraftHydrated, setIsDraftHydrated] = useState(false)
+
   const [isSaving, setIsSaving] = useState(false)
-  const [savedResult, setSavedResult] = useState<{ countNo: number } | null>(null)
+  const [savedResult, setSavedResult] = useState<{
+    countNo: number
+    duplicateApprovedModels: string[]
+  } | null>(null)
+
+  // طابور قرارات التكرار داخل نفس الفاتورة
+  const [duplicateQueue, setDuplicateQueue] = useState<PendingDuplicatePrompt[]>([])
 
   // نافذة إضافة صنف غير موجود
   const [isNewModalOpen, setIsNewModalOpen] = useState(false)
@@ -67,6 +88,7 @@ export default function NewStocktakePage() {
     }
   }, [authStatus, router])
 
+  // تحميل الأصناف
   useEffect(() => {
     getProductsForStocktake().then((data) => {
       setAllProducts(data)
@@ -74,24 +96,94 @@ export default function NewStocktakePage() {
     })
   }, [])
 
+  // استعادة المسودة التلقائية من جهاز المستخدم عند فتح الصفحة أو الرجوع للموبايل
+  useEffect(() => {
+    if (authStatus === 'loading' || isDraftHydrated) return
+    try {
+      const raw = localStorage.getItem(draftStorageKey)
+      if (raw) {
+        const parsed = JSON.parse(raw) as StocktakeDraft
+        if (parsed && Array.isArray(parsed.rows) && parsed.rows.length > 0) {
+          setRows(parsed.rows)
+          setNotes(parsed.notes || '')
+          setUnitMode(parsed.unitMode === 'SERIA' ? 'SERIA' : 'PIECE')
+          setDraftRestoredAt(parsed.updatedAt || null)
+        }
+      }
+    } catch {
+      // تجاهل خطأ القراءة
+    } finally {
+      setIsDraftHydrated(true)
+    }
+  }, [authStatus, draftStorageKey, isDraftHydrated])
+
+  // الحفظ التلقائي المستمر للمسودة في localStorage مع كل تغيير
+  useEffect(() => {
+    if (!isDraftHydrated || savedResult) return
+    try {
+      if (rows.length === 0 && !notes.trim()) {
+        localStorage.removeItem(draftStorageKey)
+      } else {
+        const payload: StocktakeDraft = {
+          rows,
+          notes,
+          unitMode,
+          updatedAt: new Date().toISOString(),
+        }
+        localStorage.setItem(draftStorageKey, JSON.stringify(payload))
+      }
+    } catch {
+      // تجاهل امتلاء التخزين
+    }
+  }, [rows, notes, unitMode, draftStorageKey, isDraftHydrated, savedResult])
+
+  // حماية من الخروج بالخطأ (زر الرجوع Back في الموبايل أو إغلاق المتصفح)
+  useEffect(() => {
+    const hasUnsaved = rows.length > 0 && !isSaving && !savedResult
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = 'لديك فاتورة جرد لم تُحفظ بعد.'
+    }
+
+    const handlePopState = () => {
+      if (
+        window.confirm(
+          '⚠️ لديك أصناف في فاتورة الجرد لم تُحفظ بعد (تم حفظها كمسودة على جهازك).\nهل تريد البقاء في صفحة الجرد أم الخروج؟\nاضغط OK للخروج، أو Cancel للبقاء.'
+        )
+      ) {
+        window.removeEventListener('popstate', handlePopState)
+        router.back()
+      } else {
+        history.pushState(null, '', pathname)
+      }
+    }
+
+    if (hasUnsaved) {
+      history.pushState(null, '', pathname)
+      window.addEventListener('popstate', handlePopState)
+      window.addEventListener('beforeunload', handleBeforeUnload)
+    }
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [rows.length, isSaving, savedResult, pathname, router])
+
   // مطابقة البحث أو الباركود
   const searchResults = useMemo(() => {
     const term = searchTerm.trim().toLowerCase()
     if (term.length < 1) return []
 
-    // أولوية 1: مطابقة تامة للمادة/الباركود (material)
     const exactMaterial = allProducts.filter(
       (p) => p.material && p.material.toLowerCase() === term
     )
     if (exactMaterial.length > 0) return exactMaterial
 
-    // أولوية 2: مطابقة تامة لرقم الموديل (modelNo)
-    const exactModel = allProducts.filter(
-      (p) => p.modelNo.toLowerCase() === term
-    )
+    const exactModel = allProducts.filter((p) => p.modelNo.toLowerCase() === term)
     if (exactModel.length > 0) return exactModel
 
-    // أولوية 3: بحث جزئي في الموديل أو المادة أو اللون أو الوصف
     return allProducts
       .filter(
         (p) =>
@@ -105,6 +197,45 @@ export default function NewStocktakePage() {
 
   const multiplier = unitMode === 'SERIA' ? PIECES_PER_SERIA : 1
 
+  const findExistingRow = (modelNo: string, color: string) => {
+    return rows.find(
+      (r) =>
+        r.modelNo.toLowerCase() === modelNo.toLowerCase() &&
+        r.color.toLowerCase() === color.toLowerCase()
+    )
+  }
+
+  const enqueueOrInsertCandidates = (
+    candidates: Array<Omit<StocktakeRow, 'rowKey'>>
+  ) => {
+    const nonDuplicates: StocktakeRow[] = []
+    const duplicates: PendingDuplicatePrompt[] = []
+
+    for (const candidate of candidates) {
+      const existing = findExistingRow(candidate.modelNo, candidate.color)
+      if (existing) {
+        duplicates.push({
+          candidate,
+          existingRowKey: existing.rowKey,
+          existingPieces: existing.countedPieces,
+        })
+      } else {
+        nonDuplicates.push({
+          ...candidate,
+          rowKey: `${candidate.productId || 'new'}-${Date.now()}-${Math.random()}`,
+        })
+      }
+    }
+
+    if (nonDuplicates.length > 0) {
+      setRows((prev) => [...nonDuplicates, ...prev])
+    }
+
+    if (duplicates.length > 0) {
+      setDuplicateQueue((prev) => [...prev, ...duplicates])
+    }
+  }
+
   const handleAddVariant = (prod: StocktakeProductOption) => {
     const rawQty = parseInt(qtyInputs[prod.id] || '', 10)
     if (isNaN(rawQty) || rawQty < 0) {
@@ -114,38 +245,20 @@ export default function NewStocktakePage() {
 
     const piecesToAdd = rawQty * multiplier
 
-    setRows((prev) => {
-      const existingIndex = prev.findIndex(
-        (r) =>
-          r.modelNo.toLowerCase() === prod.modelNo.toLowerCase() &&
-          r.color.toLowerCase() === prod.color.toLowerCase()
-      )
-
-      if (existingIndex > -1) {
-        const updated = [...prev]
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          countedPieces: updated[existingIndex].countedPieces + piecesToAdd,
-        }
-        return updated
-      }
-
-      return [
-        {
-          rowKey: `${prod.id}-${Date.now()}`,
-          productId: prod.id,
-          modelNo: prod.modelNo,
-          color: prod.color,
-          description: prod.description || '',
-          price: prod.price,
-          status: prod.status,
-          countedPieces: piecesToAdd,
-          systemQty: prod.currentStock,
-          isNewItem: false,
-        },
-        ...prev,
-      ]
-    })
+    enqueueOrInsertCandidates([
+      {
+        productId: prod.id,
+        modelNo: prod.modelNo,
+        color: prod.color,
+        description: prod.description || '',
+        price: prod.price,
+        status: prod.status,
+        countedPieces: piecesToAdd,
+        systemQty: prod.currentStock,
+        isNewItem: false,
+        lastAppliedCount: prod.lastAppliedCount,
+      },
+    ])
 
     setQtyInputs((prev) => {
       const copy = { ...prev }
@@ -157,7 +270,12 @@ export default function NewStocktakePage() {
   const handleAddAllShown = () => {
     const itemsWithQty = searchResults.filter((p) => {
       const val = qtyInputs[p.id]
-      return val !== undefined && val !== '' && !isNaN(parseInt(val, 10)) && parseInt(val, 10) >= 0
+      return (
+        val !== undefined &&
+        val !== '' &&
+        !isNaN(parseInt(val, 10)) &&
+        parseInt(val, 10) >= 0
+      )
     })
 
     if (itemsWithQty.length === 0) {
@@ -165,9 +283,53 @@ export default function NewStocktakePage() {
       return
     }
 
-    itemsWithQty.forEach((p) => handleAddVariant(p))
+    const candidates: Array<Omit<StocktakeRow, 'rowKey'>> = itemsWithQty.map((prod) => ({
+      productId: prod.id,
+      modelNo: prod.modelNo,
+      color: prod.color,
+      description: prod.description || '',
+      price: prod.price,
+      status: prod.status,
+      countedPieces: parseInt(qtyInputs[prod.id], 10) * multiplier,
+      systemQty: prod.currentStock,
+      isNewItem: false,
+      lastAppliedCount: prod.lastAppliedCount,
+    }))
+
+    enqueueOrInsertCandidates(candidates)
+
+    setQtyInputs((prev) => {
+      const copy = { ...prev }
+      itemsWithQty.forEach((p) => delete copy[p.id])
+      return copy
+    })
     setSearchTerm('')
     searchInputRef.current?.focus()
+  }
+
+  const resolveCurrentDuplicate = (action: 'ADD' | 'REPLACE' | 'IGNORE') => {
+    const current = duplicateQueue[0]
+    if (!current) return
+
+    if (action === 'ADD') {
+      setRows((prev) =>
+        prev.map((r) =>
+          r.rowKey === current.existingRowKey
+            ? { ...r, countedPieces: r.countedPieces + current.candidate.countedPieces }
+            : r
+        )
+      )
+    } else if (action === 'REPLACE') {
+      setRows((prev) =>
+        prev.map((r) =>
+          r.rowKey === current.existingRowKey
+            ? { ...r, countedPieces: current.candidate.countedPieces }
+            : r
+        )
+      )
+    }
+
+    setDuplicateQueue((prev) => prev.slice(1))
   }
 
   const handleScan = (code: string) => {
@@ -176,7 +338,6 @@ export default function NewStocktakePage() {
     setSearchTerm(cleanCode)
     setShowScanner(false)
 
-    // لو الكود غير موجود تماماً نجهز المودال السريع في حال رغب بإضافته كصنف جديد
     const term = cleanCode.toLowerCase()
     const matched = allProducts.some(
       (p) =>
@@ -217,49 +378,30 @@ export default function NewStocktakePage() {
 
     const piecesCount = qtyNum * multiplier
 
-    // تحقق إن كان الصنف مسجلاً فعلاً في القائمة
     const matchedInDb = allProducts.find(
       (p) =>
         p.modelNo.toLowerCase() === modelNo.toLowerCase() &&
         p.color.toLowerCase() === color.toLowerCase()
     )
 
-    setRows((prev) => {
-      const existingIndex = prev.findIndex(
-        (r) =>
-          r.modelNo.toLowerCase() === modelNo.toLowerCase() &&
-          r.color.toLowerCase() === color.toLowerCase()
-      )
-
-      if (existingIndex > -1) {
-        const updated = [...prev]
-        updated[existingIndex] = {
-          ...updated[existingIndex],
-          countedPieces: updated[existingIndex].countedPieces + piecesCount,
-        }
-        return updated
-      }
-
-      return [
-        {
-          rowKey: `new-${Date.now()}-${Math.random()}`,
-          productId: matchedInDb ? matchedInDb.id : null,
-          modelNo: matchedInDb ? matchedInDb.modelNo : modelNo,
-          color: matchedInDb ? matchedInDb.color : color,
-          description: matchedInDb
-            ? matchedInDb.description || ''
-            : newItem.description.trim(),
-          price: matchedInDb
-            ? matchedInDb.price
-            : parseFloat(newItem.price) || 0,
-          status: matchedInDb ? matchedInDb.status : newItem.status,
-          countedPieces: piecesCount,
-          systemQty: matchedInDb ? matchedInDb.currentStock : 0,
-          isNewItem: !matchedInDb,
-        },
-        ...prev,
-      ]
-    })
+    enqueueOrInsertCandidates([
+      {
+        productId: matchedInDb ? matchedInDb.id : null,
+        modelNo: matchedInDb ? matchedInDb.modelNo : modelNo,
+        color: matchedInDb ? matchedInDb.color : color,
+        description: matchedInDb
+          ? matchedInDb.description || ''
+          : newItem.description.trim(),
+        price: matchedInDb
+          ? matchedInDb.price
+          : parseFloat(newItem.price) || 0,
+        status: matchedInDb ? matchedInDb.status : newItem.status,
+        countedPieces: piecesCount,
+        systemQty: matchedInDb ? matchedInDb.currentStock : 0,
+        isNewItem: !matchedInDb,
+        lastAppliedCount: matchedInDb ? matchedInDb.lastAppliedCount : null,
+      },
+    ])
 
     setIsNewModalOpen(false)
     setSearchTerm('')
@@ -276,10 +418,53 @@ export default function NewStocktakePage() {
     setRows((prev) => prev.filter((r) => r.rowKey !== rowKey))
   }
 
+  const clearDraftCompletely = () => {
+    if (!confirm('هل تريد مسح المسودة الحالية والبدء بفاتورة فارغة؟')) return
+    setRows([])
+    setNotes('')
+    setDraftRestoredAt(null)
+    try {
+      localStorage.removeItem(draftStorageKey)
+    } catch {
+      // تجاهل
+    }
+  }
+
+  const handleGoHome = () => {
+    if (rows.length > 0 && !savedResult) {
+      if (
+        !window.confirm(
+          'الفاتورة غير محفوظة بعد في السجل (تم حفظها كمسودة على جهازك). هل تريد الخروج للرئيسية؟'
+        )
+      ) {
+        return
+      }
+    }
+    router.push('/')
+  }
+
   const handleSubmitStocktake = async () => {
     if (rows.length === 0) {
       alert('أضف صنفاً واحداً على الأقل قبل حفظ فاتورة الجرد')
       return
+    }
+
+    const prevAppliedRows = rows.filter((r) => r.lastAppliedCount !== null)
+    if (prevAppliedRows.length > 0) {
+      const previewNames = prevAppliedRows
+        .slice(0, 5)
+        .map(
+          (r) =>
+            `• ${r.modelNo} (${r.color}) — فاتورة معتمدة #${r.lastAppliedCount?.countNo}`
+        )
+        .join('\n')
+
+      const proceed = window.confirm(
+        `⚠️ تنبيه: يوجد ${prevAppliedRows.length} صنف تم جرده واعتماده في فاتورة سابقة:\n${previewNames}${
+          prevAppliedRows.length > 5 ? '\n...وغيرها' : ''
+        }\n\nسيتم إرسال الفاتورة للوحة التحكم مع تمييز هذه الأصناف للاختيار بين الزيادة أو اعتماد الحالي.\nهل تريد المتابعة وحفظ الفاتورة؟`
+      )
+      if (!proceed) return
     }
 
     setIsSaving(true)
@@ -299,15 +484,26 @@ export default function NewStocktakePage() {
     setIsSaving(false)
 
     if (res.success && res.countNo) {
-      setSavedResult({ countNo: res.countNo })
+      try {
+        localStorage.removeItem(draftStorageKey)
+      } catch {
+        // تجاهل
+      }
+      setSavedResult({
+        countNo: res.countNo,
+        duplicateApprovedModels: res.duplicateApprovedModels || [],
+      })
       setRows([])
       setNotes('')
+      setDraftRestoredAt(null)
     } else {
       alert('❌ خطأ: ' + (res.error || 'فشل حفظ فاتورة الجرد'))
     }
   }
 
   const totalPieces = rows.reduce((sum, r) => sum + r.countedPieces, 0)
+  const previousCountDuplicates = rows.filter((r) => r.lastAppliedCount !== null).length
+  const activeDuplicate = duplicateQueue[0] || null
 
   if (savedResult) {
     return (
@@ -328,6 +524,20 @@ export default function NewStocktakePage() {
             <br />
             تم إرسال الفاتورة إلى سجلات الجرد في لوحة التحكم للمراجعة والاعتماد.
           </p>
+
+          {savedResult.duplicateApprovedModels.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 text-right text-xs font-bold text-amber-900 space-y-1">
+              <div className="font-black">
+                ⚠️ ملاحظة: الفاتورة تحتوي على أصناف مجردة في فواتير معتمدة سابقة:
+              </div>
+              <div className="max-h-28 overflow-y-auto space-y-0.5 text-[11px]">
+                {savedResult.duplicateApprovedModels.map((label, idx) => (
+                  <div key={idx}>• {label}</div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-col gap-3 pt-2">
             <button
               onClick={() => setSavedResult(null)}
@@ -335,12 +545,12 @@ export default function NewStocktakePage() {
             >
               📋 بدء فاتورة جرد جديدة
             </button>
-            <Link
-              href="/"
+            <button
+              onClick={() => router.push('/')}
               className="w-full py-3.5 rounded-2xl bg-gray-100 text-gray-700 font-bold text-base hover:bg-gray-200"
             >
               🏠 العودة للرئيسية
-            </Link>
+            </button>
           </div>
         </div>
       </div>
@@ -348,22 +558,24 @@ export default function NewStocktakePage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-36 font-sans text-gray-800" dir="rtl">
-      {/* الهيدر الثابت المناسب للموبايل */}
+    <div className="min-h-screen bg-gray-50 pb-40 font-sans text-gray-800" dir="rtl">
+      {/* الهيدر الثابت */}
       <header className="bg-white p-3.5 shadow-sm sticky top-0 z-30 border-b border-gray-100">
         <div className="max-w-2xl mx-auto flex justify-between items-center gap-2">
-          <Link
-            href="/"
+          <button
+            type="button"
+            onClick={handleGoHome}
             className="text-xs sm:text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-xl font-bold shrink-0"
           >
             🏠 الرئيسية
-          </Link>
+          </button>
           <div className="text-center min-w-0">
             <h1 className="font-black text-base sm:text-lg text-teal-800 truncate">
               📋 فاتورة جرد المخزون
             </h1>
             <p className="text-[11px] font-bold text-gray-400 truncate">
               الموظف: {session?.user?.name || '...'}
+              {rows.length > 0 && ' • 💾 محفوظة تلقائياً'}
             </p>
           </div>
           <button
@@ -377,6 +589,30 @@ export default function NewStocktakePage() {
       </header>
 
       <main className="p-3 sm:p-4 max-w-2xl mx-auto space-y-4">
+        {/* إشعار استعادة المسودة */}
+        {draftRestoredAt && rows.length > 0 && (
+          <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3 flex items-center justify-between gap-2 text-xs font-bold text-blue-800">
+            <span>
+              💾 تم استعادة جرد غير محفوظ من جهازك (
+              {new Date(draftRestoredAt).toLocaleTimeString('ar-EG')})
+            </span>
+            <button
+              type="button"
+              onClick={clearDraftCompletely}
+              className="text-red-600 bg-white px-2.5 py-1 rounded-lg border border-red-200 shrink-0"
+            >
+              مسح والبدء من جديد
+            </button>
+          </div>
+        )}
+
+        {/* تنبيه وجود أصناف مجردة في فواتير معتمدة سابقة */}
+        {previousCountDuplicates > 0 && (
+          <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-3 text-xs font-bold text-amber-900">
+            ⚠️ يوجد في قائمتك <b>{previousCountDuplicates}</b> صنف تم جرده واعتماده في فاتورة جرد سابقة (مميز باللون البرتقالي بالأسفل).
+          </div>
+        )}
+
         {/* تبديل وحدة الإدخال */}
         <div className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between gap-2">
           <span className="text-xs font-bold text-gray-600">
@@ -481,64 +717,78 @@ export default function NewStocktakePage() {
 
             {searchResults.length > 0 ? (
               <div className="divide-y divide-gray-100 max-h-80 overflow-y-auto">
-                {searchResults.map((prod) => (
-                  <div
-                    key={prod.id}
-                    className="p-3.5 flex items-center justify-between gap-2"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-black text-gray-900 text-base">
-                          {prod.modelNo}
-                        </span>
-                        <span className="text-xs font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg">
-                          {prod.color}
-                        </span>
-                        {prod.status === 'CLOSED' && (
-                          <span className="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-bold">
-                            مغلق
+                {searchResults.map((prod) => {
+                  const alreadyInCart = findExistingRow(prod.modelNo, prod.color)
+                  return (
+                    <div
+                      key={prod.id}
+                      className={`p-3.5 flex items-center justify-between gap-2 ${
+                        alreadyInCart
+                          ? 'bg-teal-50/40'
+                          : prod.lastAppliedCount
+                          ? 'bg-amber-50/50'
+                          : ''
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-black text-gray-900 text-base">
+                            {prod.modelNo}
                           </span>
-                        )}
+                          <span className="text-xs font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg">
+                            {prod.color}
+                          </span>
+                          {alreadyInCart && (
+                            <span className="text-[10px] bg-teal-600 text-white px-2 py-0.5 rounded-full font-bold">
+                              في الجرد: {alreadyInCart.countedPieces} قطعة
+                            </span>
+                          )}
+                          {prod.lastAppliedCount && (
+                            <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full font-bold">
+                              جُرد سابقاً #{prod.lastAppliedCount.countNo}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-gray-400 mt-0.5 truncate">
+                          {prod.description || 'بدون وصف'} | دفتري:{' '}
+                          <span className="font-bold text-gray-600">
+                            {prod.currentStock} قطعة
+                          </span>
+                        </div>
                       </div>
-                      <div className="text-[11px] text-gray-400 mt-0.5 truncate">
-                        {prod.description || 'بدون وصف'} | دفتري:{' '}
-                        <span className="font-bold text-gray-600">
-                          {prod.currentStock} قطعة
-                        </span>
-                      </div>
-                    </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min="0"
-                        placeholder={unitMode === 'SERIA' ? 'سرية' : 'قطعة'}
-                        value={qtyInputs[prod.id] ?? ''}
-                        onChange={(e) =>
-                          setQtyInputs((prev) => ({
-                            ...prev,
-                            [prod.id]: e.target.value,
-                          }))
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            handleAddVariant(prod)
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min="0"
+                          placeholder={unitMode === 'SERIA' ? 'سرية' : 'قطعة'}
+                          value={qtyInputs[prod.id] ?? ''}
+                          onChange={(e) =>
+                            setQtyInputs((prev) => ({
+                              ...prev,
+                              [prod.id]: e.target.value,
+                            }))
                           }
-                        }}
-                        className="w-20 p-2.5 border-2 border-gray-200 rounded-xl text-center font-black text-base outline-none focus:border-teal-500"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleAddVariant(prod)}
-                        className="bg-teal-600 hover:bg-teal-700 text-white px-3 py-2.5 rounded-xl font-black text-sm shadow active:scale-95"
-                      >
-                        +
-                      </button>
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              handleAddVariant(prod)
+                            }
+                          }}
+                          className="w-20 p-2.5 border-2 border-gray-200 rounded-xl text-center font-black text-base outline-none focus:border-teal-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleAddVariant(prod)}
+                          className="bg-teal-600 hover:bg-teal-700 text-white px-3 py-2.5 rounded-xl font-black text-sm shadow active:scale-95"
+                        >
+                          +
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
               <div className="p-6 text-center space-y-3">
@@ -566,11 +816,7 @@ export default function NewStocktakePage() {
             {rows.length > 0 && (
               <button
                 type="button"
-                onClick={() => {
-                  if (confirm('مسح جميع بنود فاتورة الجرد الحالية؟')) {
-                    setRows([])
-                  }
-                }}
+                onClick={clearDraftCompletely}
                 className="text-xs text-red-500 font-bold"
               >
                 مسح الكل
@@ -592,14 +838,17 @@ export default function NewStocktakePage() {
                 const seriasDisplay = (row.countedPieces / PIECES_PER_SERIA)
                   .toFixed(2)
                   .replace(/\.00$/, '')
+                const hasPrevApplied = Boolean(row.lastAppliedCount)
 
                 return (
                   <div
                     key={row.rowKey}
-                    className={`bg-white p-3.5 rounded-2xl shadow-sm border flex flex-col gap-2.5 ${
-                      row.isNewItem
-                        ? 'border-indigo-300 bg-indigo-50/30'
-                        : 'border-gray-100'
+                    className={`p-3.5 rounded-2xl shadow-sm border flex flex-col gap-2.5 ${
+                      hasPrevApplied
+                        ? 'bg-amber-50 border-amber-400 border-r-4'
+                        : row.isNewItem
+                        ? 'border-indigo-300 bg-indigo-50/40'
+                        : 'bg-white border-gray-100'
                     }`}
                   >
                     <div className="flex justify-between items-start gap-2">
@@ -608,7 +857,7 @@ export default function NewStocktakePage() {
                           <span className="font-black text-lg text-gray-900">
                             {row.modelNo}
                           </span>
-                          <span className="text-xs font-bold bg-gray-100 text-gray-700 px-2 py-0.5 rounded-lg">
+                          <span className="text-xs font-bold bg-white border border-gray-200 text-gray-700 px-2 py-0.5 rounded-lg">
                             {row.color}
                           </span>
                           {row.isNewItem && (
@@ -616,7 +865,18 @@ export default function NewStocktakePage() {
                               صنف جديد ✨
                             </span>
                           )}
+                          {row.lastAppliedCount && (
+                            <span className="text-[10px] font-black bg-amber-600 text-white px-2 py-0.5 rounded-full">
+                              🔁 جُرد سابقاً (#{row.lastAppliedCount.countNo})
+                            </span>
+                          )}
                         </div>
+                        {row.lastAppliedCount && (
+                          <p className="text-[11px] font-bold text-amber-800 mt-1">
+                            معتمد مسبقاً بكمية {row.lastAppliedCount.countedQty} قطعة بواسطة{' '}
+                            {row.lastAppliedCount.userName}
+                          </p>
+                        )}
                         {row.description && (
                           <p className="text-xs text-gray-500 mt-0.5 truncate">
                             {row.description}
@@ -632,7 +892,7 @@ export default function NewStocktakePage() {
                       </button>
                     </div>
 
-                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray-100">
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray-200/70">
                       <div className="text-xs font-bold text-gray-500">
                         <div>
                           الفعلي:{' '}
@@ -643,7 +903,7 @@ export default function NewStocktakePage() {
                         </div>
                         {!row.isNewItem && (
                           <div className="text-[11px] text-gray-400">
-                            الدفتري السابق: {row.systemQty} قطعة
+                            الدفتري الحالي: {row.systemQty} قطعة
                           </div>
                         )}
                       </div>
@@ -672,7 +932,7 @@ export default function NewStocktakePage() {
                               Math.max(0, parseInt(e.target.value, 10) || 0)
                             )
                           }
-                          className="w-16 h-9 border rounded-xl text-center font-black text-base outline-none focus:border-teal-500"
+                          className="w-16 h-9 bg-white border rounded-xl text-center font-black text-base outline-none focus:border-teal-500"
                         />
                         <button
                           type="button"
@@ -728,6 +988,71 @@ export default function NewStocktakePage() {
             >
               {isSaving ? '⏳ جاري الحفظ...' : 'حفظ فاتورة الجرد ✅'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* نافذة قرار تكرار الصنف داخل نفس فاتورة الجرد */}
+      {activeDuplicate && (
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="text-center space-y-1">
+              <div className="text-4xl">🔁</div>
+              <h3 className="text-lg font-black text-gray-900">
+                صنف مكرر في نفس الفاتورة!
+              </h3>
+              <p className="text-sm font-bold text-teal-700">
+                موديل {activeDuplicate.candidate.modelNo} — لون{' '}
+                {activeDuplicate.candidate.color}
+              </p>
+            </div>
+
+            <div className="bg-gray-50 rounded-2xl p-4 space-y-2 text-sm border border-gray-100">
+              <div className="flex justify-between">
+                <span className="text-gray-500 font-bold">العدد المسجل حالياً:</span>
+                <span className="font-black text-gray-900">
+                  {activeDuplicate.existingPieces} قطعة
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500 font-bold">العدد الجديد المدخل:</span>
+                <span className="font-black text-blue-600">
+                  {activeDuplicate.candidate.countedPieces} قطعة
+                </span>
+              </div>
+              <div className="flex justify-between pt-2 border-t border-dashed border-gray-300">
+                <span className="text-gray-600 font-bold">الإجمالي عند الجمع:</span>
+                <span className="font-black text-emerald-700">
+                  {activeDuplicate.existingPieces +
+                    activeDuplicate.candidate.countedPieces}{' '}
+                  قطعة
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => resolveCurrentDuplicate('ADD')}
+                className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm shadow-lg"
+              >
+                ➕ زيادة على العدد ({activeDuplicate.existingPieces + activeDuplicate.candidate.countedPieces} قطعة)
+              </button>
+              <button
+                type="button"
+                onClick={() => resolveCurrentDuplicate('REPLACE')}
+                className="w-full py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-black text-sm"
+              >
+                🔄 اعتماد العدد الجديد فقط ({activeDuplicate.candidate.countedPieces} قطعة)
+              </button>
+              <button
+                type="button"
+                onClick={() => resolveCurrentDuplicate('IGNORE')}
+                className="w-full py-3 rounded-2xl bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-sm"
+              >
+                ❌ تجاهل (تم الإدخال بالخطأ)
+              </button>
+            </div>
           </div>
         </div>
       )}
