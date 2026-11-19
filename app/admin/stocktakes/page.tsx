@@ -57,6 +57,22 @@ interface StocktakeRecord {
   pendingDuplicatesCount: number
 }
 
+interface DuplicateGroupDetail {
+  key: string
+  modelNo: string
+  color: string
+  liveCurrentStock: number
+  previousApplied: PreviousAppliedInfo | null
+  pendingOccurrences: Array<{
+    stocktakeId: string
+    countNo: number
+    userName: string
+    userCode: string
+    createdAt: string
+    countedQty: number
+  }>
+}
+
 export default function AdminStocktakesPage() {
   const [stocktakes, setStocktakes] = useState<StocktakeRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -65,6 +81,7 @@ export default function AdminStocktakesPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [itemModes, setItemModes] = useState<Record<string, DuplicateResolutionMode>>({})
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false)
+  const [showBulkDuplicateDetails, setShowBulkDuplicateDetails] = useState(false)
   const [bulkDuplicateMode, setBulkDuplicateMode] = useState<DuplicateResolutionMode>('REPLACE')
   const [isPending, startTransition] = useTransition()
 
@@ -91,18 +108,51 @@ export default function AdminStocktakesPage() {
     [stocktakes]
   )
 
+  const bulkDuplicateGroups = useMemo(() => {
+    const map = new Map<string, DuplicateGroupDetail>()
+
+    for (const st of pendingStocktakes) {
+      for (const item of st.items) {
+        const key = `${item.modelNo.trim().toLowerCase()}__${item.color.trim().toLowerCase()}`
+        let group = map.get(key)
+        if (!group) {
+          group = {
+            key,
+            modelNo: item.modelNo,
+            color: item.color,
+            liveCurrentStock: item.liveCurrentStock,
+            previousApplied: item.previousApplied,
+            pendingOccurrences: [],
+          }
+          map.set(key, group)
+        } else if (!group.previousApplied && item.previousApplied) {
+          group.previousApplied = item.previousApplied
+        }
+
+        group.pendingOccurrences.push({
+          stocktakeId: st.id,
+          countNo: st.countNo,
+          userName: st.user.name,
+          userCode: st.user.code,
+          createdAt: st.createdAt,
+          countedQty: item.countedQty,
+        })
+      }
+    }
+
+    return Array.from(map.values()).filter(
+      (g) => g.previousApplied !== null || g.pendingOccurrences.length > 1
+    )
+  }, [pendingStocktakes])
+
   const bulkSummary = useMemo(() => {
     let totalItems = 0
     let totalPieces = 0
-    let totalDuplicates = 0
 
     for (const st of pendingStocktakes) {
       totalItems += st.items.length
       for (const item of st.items) {
         totalPieces += item.countedQty
-        if (item.previousApplied || item.otherPending.length > 0) {
-          totalDuplicates++
-        }
       }
     }
 
@@ -110,9 +160,9 @@ export default function AdminStocktakesPage() {
       invoicesCount: pendingStocktakes.length,
       totalItems,
       totalPieces,
-      totalDuplicates,
+      duplicateModelsCount: bulkDuplicateGroups.length,
     }
-  }, [pendingStocktakes])
+  }, [pendingStocktakes, bulkDuplicateGroups])
 
   const openStocktakeModal = (st: StocktakeRecord) => {
     const initialModes: Record<string, DuplicateResolutionMode> = {}
@@ -207,6 +257,7 @@ export default function AdminStocktakesPage() {
       const res = await applyAllPendingStocktakes(bulkDuplicateMode)
       if (res.success && 'appliedInvoicesCount' in res) {
         setIsBulkModalOpen(false)
+        setShowBulkDuplicateDetails(false)
         alert(
           `✅ تم اعتماد جميع الفواتير قيد المراجعة بنجاح!\n- عدد الفواتير المعتمدة: ${res.appliedInvoicesCount}\n- أصناف تم تحديثها: ${res.updatedProductsCount}\n- أصناف جديدة تم إضافتها: ${res.createdProductsCount}`
         )
@@ -353,6 +404,7 @@ export default function AdminStocktakesPage() {
             disabled={isPending}
             onClick={() => {
               setBulkDuplicateMode('REPLACE')
+              setShowBulkDuplicateDetails(false)
               setIsBulkModalOpen(true)
             }}
             className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs sm:text-sm font-black shadow-lg shadow-teal-100 flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50"
@@ -484,11 +536,16 @@ export default function AdminStocktakesPage() {
         </div>
       )}
 
-      {/* نافذة تأكيد اعتماد كل الفواتير قيد المراجعة */}
+      {/* نافذة تأكيد اعتماد كل الفواتير قيد المراجعة مع زر تفاصيل المكرر */}
       {isBulkModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
-            <div className="flex justify-between items-center border-b pb-3">
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div
+            className={`bg-white w-full ${
+              showBulkDuplicateDetails ? 'max-w-3xl' : 'max-w-lg'
+            } max-h-[92vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden transition-all`}
+          >
+            {/* هيدر ثابت */}
+            <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
               <h3 className="text-lg font-black text-teal-900">
                 ✅ اعتماد جميع الفواتير قيد المراجعة
               </h3>
@@ -496,73 +553,203 @@ export default function AdminStocktakesPage() {
                 type="button"
                 disabled={isPending}
                 onClick={() => setIsBulkModalOpen(false)}
-                className="text-gray-400 hover:text-red-500 text-xl font-bold"
+                className="text-gray-400 hover:text-red-500 text-xl font-bold p-1"
               >
                 ✕
               </button>
             </div>
 
-            <div className="bg-gray-50 rounded-2xl p-4 space-y-2 text-sm border border-gray-100">
-              <div className="flex justify-between">
-                <span className="text-gray-500 font-bold">عدد الفواتير:</span>
-                <span className="font-black text-teal-700">
-                  {bulkSummary.invoicesCount} فاتورة
-                </span>
+            {/* جسم قابل للتمرير */}
+            <div className="p-5 overflow-y-auto flex-1 space-y-4">
+              <div className="bg-gray-50 rounded-2xl p-4 space-y-2 text-sm border border-gray-100">
+                <div className="flex justify-between">
+                  <span className="text-gray-500 font-bold">عدد الفواتير:</span>
+                  <span className="font-black text-teal-700">
+                    {bulkSummary.invoicesCount} فاتورة
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500 font-bold">إجمالي البنود:</span>
+                  <span className="font-black text-gray-800">
+                    {bulkSummary.totalItems} صنف
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500 font-bold">إجمالي القطع المجردة:</span>
+                  <span className="font-black text-gray-800">
+                    {bulkSummary.totalPieces} قطعة
+                  </span>
+                </div>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500 font-bold">إجمالي البنود:</span>
-                <span className="font-black text-gray-800">
-                  {bulkSummary.totalItems} صنف
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500 font-bold">إجمالي القطع المجردة:</span>
-                <span className="font-black text-gray-800">
-                  {bulkSummary.totalPieces} قطعة
-                </span>
-              </div>
+
+              {bulkSummary.duplicateModelsCount > 0 && (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 space-y-3">
+                  <div className="flex flex-wrap justify-between items-center gap-2">
+                    <div className="text-xs font-black text-amber-900">
+                      ⚠️ تنبيه: يوجد{' '}
+                      <span className="text-red-700 text-sm">
+                        {bulkSummary.duplicateModelsCount}
+                      </span>{' '}
+                      موديل/لون متكرر (بين الفواتير المعلقة أو مع جرد معتمد سابق).
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setShowBulkDuplicateDetails((prev) => !prev)
+                      }
+                      className="px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-black shadow-sm shrink-0"
+                    >
+                      {showBulkDuplicateDetails
+                        ? '🔼 إخفاء تفاصيل المكرر'
+                        : `🔍 تفاصيل المكرر (${bulkSummary.duplicateModelsCount})`}
+                    </button>
+                  </div>
+
+                  {/* قسم تفاصيل المكرر القابل للفتح */}
+                  {showBulkDuplicateDetails && (
+                    <div className="space-y-2.5 max-h-72 overflow-y-auto pt-2 border-t border-amber-200/80">
+                      {bulkDuplicateGroups.map((grp) => {
+                        const sumPending = grp.pendingOccurrences.reduce(
+                          (s, o) => s + o.countedQty,
+                          0
+                        )
+                        const latestPendingQty =
+                          grp.pendingOccurrences[0]?.countedQty || 0
+                        const expectedAddTotal =
+                          (grp.previousApplied
+                            ? grp.liveCurrentStock
+                            : 0) + sumPending
+
+                        return (
+                          <div
+                            key={grp.key}
+                            className="bg-white rounded-xl p-3 border border-amber-200 shadow-sm space-y-2 text-xs"
+                          >
+                            <div className="flex flex-wrap justify-between items-center gap-2 border-b border-gray-100 pb-1.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-black text-base text-gray-900">
+                                  {grp.modelNo}
+                                </span>
+                                <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg font-bold">
+                                  {grp.color}
+                                </span>
+                                <span className="text-[11px] text-gray-400">
+                                  الرصيد الحالي بالمخزن: {grp.liveCurrentStock} قطعة
+                                </span>
+                              </div>
+                              <span className="text-[11px] font-black text-teal-700">
+                                {bulkDuplicateMode === 'ADD'
+                                  ? `المتوقع عند الجمع: ${expectedAddTotal} قطعة`
+                                  : `المتوقع (الأحدث): ${latestPendingQty} قطعة`}
+                              </span>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              {grp.previousApplied && (
+                                <div className="flex flex-wrap justify-between items-center gap-2 bg-green-50 border border-green-200 px-2.5 py-1.5 rounded-lg">
+                                  <div>
+                                    <span className="font-black text-green-800">
+                                      ✅ فاتورة معتمدة سابقة #{grp.previousApplied.countNo}
+                                    </span>{' '}
+                                    <span className="text-gray-700 font-bold">
+                                      — 👤 {grp.previousApplied.userName}
+                                    </span>
+                                    <span className="text-[10px] text-gray-400 mr-2">
+                                      ({new Date(grp.previousApplied.date).toLocaleDateString('ar-EG')})
+                                    </span>
+                                  </div>
+                                  <span className="font-black text-green-700">
+                                    {grp.previousApplied.countedQty} قطعة
+                                  </span>
+                                </div>
+                              )}
+
+                              {grp.pendingOccurrences.map((occ) => (
+                                <div
+                                  key={`${grp.key}-${occ.stocktakeId}`}
+                                  className="flex flex-wrap justify-between items-center gap-2 bg-amber-50/70 border border-amber-200 px-2.5 py-1.5 rounded-lg"
+                                >
+                                  <div>
+                                    <span className="font-black text-amber-900">
+                                      ⏳ قيد المراجعة #{occ.countNo}
+                                    </span>{' '}
+                                    <span className="text-gray-700 font-bold">
+                                      — 👤 {occ.userName} ({occ.userCode})
+                                    </span>
+                                    <span className="text-[10px] text-gray-400 mr-2">
+                                      ({new Date(occ.createdAt).toLocaleString('ar-EG')})
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-black text-amber-900">
+                                      {occ.countedQty} قطعة
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const target = stocktakes.find(
+                                          (s) => s.id === occ.stocktakeId
+                                        )
+                                        if (target) {
+                                          setIsBulkModalOpen(false)
+                                          openStocktakeModal(target)
+                                        }
+                                      }}
+                                      className="text-[10px] bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 px-2 py-0.5 rounded font-bold"
+                                    >
+                                      👁️ فتح
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  <div className="space-y-2 pt-1">
+                    <div className="text-xs font-bold text-amber-900">
+                      اختر طريقة التعامل مع المكررات:
+                    </div>
+                    <label className="flex items-start gap-2 text-xs font-bold text-gray-800 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="bulkDuplicateMode"
+                        checked={bulkDuplicateMode === 'ADD'}
+                        onChange={() => setBulkDuplicateMode('ADD')}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        ➕ زيادة على الجرد السابق (تُجمع الكميات المكررة مع بعضها)
+                      </span>
+                    </label>
+
+                    <label className="flex items-start gap-2 text-xs font-bold text-gray-800 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="bulkDuplicateMode"
+                        checked={bulkDuplicateMode === 'REPLACE'}
+                        onChange={() => setBulkDuplicateMode('REPLACE')}
+                        className="mt-0.5"
+                      />
+                      <span>
+                        🔄 اعتماد الأحدث فقط (استبدال الرصيد بآخر فاتورة للصنف)
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {bulkSummary.totalDuplicates > 0 && (
-              <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 space-y-2.5">
-                <div className="text-xs font-black text-amber-900">
-                  ⚠️ تنبيه: يوجد {bulkSummary.totalDuplicates} بند متكرر (بين الفواتير المعلقة أو مع جرد معتمد سابق). اختر طريقة التعامل مع المكررات:
-                </div>
-
-                <label className="flex items-start gap-2 text-xs font-bold text-gray-800 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="bulkDuplicateMode"
-                    checked={bulkDuplicateMode === 'ADD'}
-                    onChange={() => setBulkDuplicateMode('ADD')}
-                    className="mt-0.5"
-                  />
-                  <span>
-                    ➕ زيادة على الجرد السابق (تُجمع الكميات المكررة مع بعضها)
-                  </span>
-                </label>
-
-                <label className="flex items-start gap-2 text-xs font-bold text-gray-800 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="bulkDuplicateMode"
-                    checked={bulkDuplicateMode === 'REPLACE'}
-                    onChange={() => setBulkDuplicateMode('REPLACE')}
-                    className="mt-0.5"
-                  />
-                  <span>
-                    🔄 اعتماد الأحدث فقط (استبدال الرصيد بآخر فاتورة للصنف)
-                  </span>
-                </label>
-              </div>
-            )}
-
-            <div className="flex gap-2 pt-2">
+            {/* فوتر ثابت */}
+            <div className="p-4 border-t border-gray-100 bg-gray-50 flex gap-2 shrink-0">
               <button
                 type="button"
                 disabled={isPending}
                 onClick={() => setIsBulkModalOpen(false)}
-                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl font-bold text-gray-700 text-sm"
+                className="flex-1 py-3 bg-gray-200 hover:bg-gray-300 rounded-xl font-bold text-gray-700 text-sm"
               >
                 إلغاء
               </button>
