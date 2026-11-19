@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useTransition, useCallback } from 'react'
 import {
   getStocktakes,
   applyStocktake,
+  applyAllPendingStocktakes,
   rejectStocktake,
   deleteStocktake,
   updateStocktakeItem,
@@ -63,6 +64,8 @@ export default function AdminStocktakesPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [itemModes, setItemModes] = useState<Record<string, DuplicateResolutionMode>>({})
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false)
+  const [bulkDuplicateMode, setBulkDuplicateMode] = useState<DuplicateResolutionMode>('REPLACE')
   const [isPending, startTransition] = useTransition()
 
   const loadData = useCallback(async () => {
@@ -83,8 +86,35 @@ export default function AdminStocktakesPage() {
     [stocktakes, selectedId]
   )
 
+  const pendingStocktakes = useMemo(
+    () => stocktakes.filter((s) => s.status === 'PENDING'),
+    [stocktakes]
+  )
+
+  const bulkSummary = useMemo(() => {
+    let totalItems = 0
+    let totalPieces = 0
+    let totalDuplicates = 0
+
+    for (const st of pendingStocktakes) {
+      totalItems += st.items.length
+      for (const item of st.items) {
+        totalPieces += item.countedQty
+        if (item.previousApplied || item.otherPending.length > 0) {
+          totalDuplicates++
+        }
+      }
+    }
+
+    return {
+      invoicesCount: pendingStocktakes.length,
+      totalItems,
+      totalPieces,
+      totalDuplicates,
+    }
+  }, [pendingStocktakes])
+
   const openStocktakeModal = (st: StocktakeRecord) => {
-    // تعيين افتراضي 'REPLACE' للمكررات عند الفتح
     const initialModes: Record<string, DuplicateResolutionMode> = {}
     st.items.forEach((item) => {
       const key = `${item.modelNo.trim().toLowerCase()}__${item.color.trim().toLowerCase()}`
@@ -125,7 +155,6 @@ export default function AdminStocktakesPage() {
   }
 
   const handleApplyFromCard = (stocktake: StocktakeRecord) => {
-    // إذا كانت الفاتورة تحتوي على أصناف مجردة مسبقاً، نفتح التفاصيل أولاً ليختار الأدمن بين الزيادة أو اعتماد الحالي
     if (stocktake.appliedDuplicatesCount > 0) {
       openStocktakeModal(stocktake)
       return
@@ -169,6 +198,22 @@ export default function AdminStocktakesPage() {
         await loadData()
       } else {
         alert('❌ فشل الاعتماد: ' + res.error)
+      }
+    })
+  }
+
+  const handleExecuteApplyAll = () => {
+    startTransition(async () => {
+      const res = await applyAllPendingStocktakes(bulkDuplicateMode)
+      if (res.success && 'appliedInvoicesCount' in res) {
+        setIsBulkModalOpen(false)
+        alert(
+          `✅ تم اعتماد جميع الفواتير قيد المراجعة بنجاح!\n- عدد الفواتير المعتمدة: ${res.appliedInvoicesCount}\n- أصناف تم تحديثها: ${res.updatedProductsCount}\n- أصناف جديدة تم إضافتها: ${res.createdProductsCount}`
+        )
+        await loadData()
+      } else {
+        const errMsg = 'error' in res && res.error ? res.error : 'حدث خطأ غير متوقع'
+        alert('❌ فشل اعتماد الكل: ' + errMsg)
       }
     })
   }
@@ -268,37 +313,54 @@ export default function AdminStocktakesPage() {
         />
       </div>
 
-      {/* تبويبات الفلترة */}
-      <div className="flex flex-wrap gap-2">
-        {[
-          { key: 'ALL', label: `الكل (${stocktakes.length})` },
-          {
-            key: 'PENDING',
-            label: `قيد المراجعة (${stocktakes.filter((s) => s.status === 'PENDING').length})`,
-          },
-          {
-            key: 'APPLIED',
-            label: `معتمدة (${stocktakes.filter((s) => s.status === 'APPLIED').length})`,
-          },
-          {
-            key: 'REJECTED',
-            label: `مرفوضة (${stocktakes.filter((s) => s.status === 'REJECTED').length})`,
-          },
-        ].map((tab) => (
+      {/* تبويبات الفلترة + زر اعتماد الكل */}
+      <div className="flex flex-wrap justify-between items-center gap-3">
+        <div className="flex flex-wrap gap-2">
+          {[
+            { key: 'ALL', label: `الكل (${stocktakes.length})` },
+            {
+              key: 'PENDING',
+              label: `قيد المراجعة (${pendingStocktakes.length})`,
+            },
+            {
+              key: 'APPLIED',
+              label: `معتمدة (${stocktakes.filter((s) => s.status === 'APPLIED').length})`,
+            },
+            {
+              key: 'REJECTED',
+              label: `مرفوضة (${stocktakes.filter((s) => s.status === 'REJECTED').length})`,
+            },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() =>
+                setStatusFilter(tab.key as 'ALL' | 'PENDING' | 'APPLIED' | 'REJECTED')
+              }
+              className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-black transition-all ${
+                statusFilter === tab.key
+                  ? 'bg-slate-900 text-white shadow'
+                  : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {pendingStocktakes.length > 0 && (
           <button
-            key={tab.key}
-            onClick={() =>
-              setStatusFilter(tab.key as 'ALL' | 'PENDING' | 'APPLIED' | 'REJECTED')
-            }
-            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-black transition-all ${
-              statusFilter === tab.key
-                ? 'bg-slate-900 text-white shadow'
-                : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-            }`}
+            type="button"
+            disabled={isPending}
+            onClick={() => {
+              setBulkDuplicateMode('REPLACE')
+              setIsBulkModalOpen(true)
+            }}
+            className="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-xs sm:text-sm font-black shadow-lg shadow-teal-100 flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50"
           >
-            {tab.label}
+            <span>✅</span>
+            <span>اعتماد الكل ({pendingStocktakes.length} قيد المراجعة)</span>
           </button>
-        ))}
+        )}
       </div>
 
       {/* قائمة السجلات */}
@@ -334,7 +396,6 @@ export default function AdminStocktakesPage() {
                     {getStatusBadge(st.status)}
                   </div>
 
-                  {/* إشعارات التكرار على بطاقة الفاتورة */}
                   {st.appliedDuplicatesCount > 0 && (
                     <div className="bg-amber-50 border border-amber-300 text-amber-900 px-3 py-2 rounded-xl text-xs font-black">
                       ⚠️ تنبيه: يحتوي على {st.appliedDuplicatesCount} صنف تم جرده في فواتير معتمدة سابقة
@@ -423,6 +484,103 @@ export default function AdminStocktakesPage() {
         </div>
       )}
 
+      {/* نافذة تأكيد اعتماد كل الفواتير قيد المراجعة */}
+      {isBulkModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="flex justify-between items-center border-b pb-3">
+              <h3 className="text-lg font-black text-teal-900">
+                ✅ اعتماد جميع الفواتير قيد المراجعة
+              </h3>
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => setIsBulkModalOpen(false)}
+                className="text-gray-400 hover:text-red-500 text-xl font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="bg-gray-50 rounded-2xl p-4 space-y-2 text-sm border border-gray-100">
+              <div className="flex justify-between">
+                <span className="text-gray-500 font-bold">عدد الفواتير:</span>
+                <span className="font-black text-teal-700">
+                  {bulkSummary.invoicesCount} فاتورة
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500 font-bold">إجمالي البنود:</span>
+                <span className="font-black text-gray-800">
+                  {bulkSummary.totalItems} صنف
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500 font-bold">إجمالي القطع المجردة:</span>
+                <span className="font-black text-gray-800">
+                  {bulkSummary.totalPieces} قطعة
+                </span>
+              </div>
+            </div>
+
+            {bulkSummary.totalDuplicates > 0 && (
+              <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 space-y-2.5">
+                <div className="text-xs font-black text-amber-900">
+                  ⚠️ تنبيه: يوجد {bulkSummary.totalDuplicates} بند متكرر (بين الفواتير المعلقة أو مع جرد معتمد سابق). اختر طريقة التعامل مع المكررات:
+                </div>
+
+                <label className="flex items-start gap-2 text-xs font-bold text-gray-800 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="bulkDuplicateMode"
+                    checked={bulkDuplicateMode === 'ADD'}
+                    onChange={() => setBulkDuplicateMode('ADD')}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    ➕ زيادة على الجرد السابق (تُجمع الكميات المكررة مع بعضها)
+                  </span>
+                </label>
+
+                <label className="flex items-start gap-2 text-xs font-bold text-gray-800 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="bulkDuplicateMode"
+                    checked={bulkDuplicateMode === 'REPLACE'}
+                    onChange={() => setBulkDuplicateMode('REPLACE')}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    🔄 اعتماد الأحدث فقط (استبدال الرصيد بآخر فاتورة للصنف)
+                  </span>
+                </label>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => setIsBulkModalOpen(false)}
+                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 rounded-xl font-bold text-gray-700 text-sm"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={handleExecuteApplyAll}
+                className="flex-1 py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl font-black text-sm shadow-lg disabled:opacity-50"
+              >
+                {isPending
+                  ? '⏳ جاري الاعتماد...'
+                  : `تأكيد اعتماد الكل (${bulkSummary.invoicesCount})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* نافذة تفاصيل ومراجعة فاتورة الجرد */}
       {selected && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
@@ -447,7 +605,6 @@ export default function AdminStocktakesPage() {
             </div>
 
             <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4">
-              {/* شريط تنبيه وإجراءات سريعة للأصناف المكررة */}
               {selected.appliedDuplicatesCount > 0 && (
                 <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 space-y-3">
                   <div className="text-sm font-black text-amber-900">

@@ -369,3 +369,14 @@ model visitor_stats {
   date  DateTime @unique @default(now()) @db.Date
   count Int      @default(0)
 }
+model image_link_rules {
+  id                 Int      @id @default(autoincrement())
+  name               String?  @db.VarChar(255)
+  raw_input          String   @db.Text
+  prefixes           String   @db.Text
+  suffix_length      Int      @default(2)
+  fallback_any_color Boolean  @default(false)
+  active             Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+}

@@ -289,7 +289,6 @@ export async function getStocktakes() {
       take: 200,
     })
 
-    // بناء فهرس لجميع الفواتير المعتمدة وغير المعتمدة لكشف التكرار
     const appliedHistoryByKey = new Map<
       string,
       Array<{
@@ -426,7 +425,7 @@ export async function updateStocktakeItem(
   }
 }
 
-// 5. اعتماد فاتورة الجرد وتطبيقها (مع دعم اختيار الزيادة على السابق أو اعتماد الحالي للمكرر)
+// 5. اعتماد فاتورة جرد واحدة وتطبيقها
 export async function applyStocktake(
   stocktakeId: string,
   itemModes: Record<string, DuplicateResolutionMode> = {}
@@ -583,7 +582,199 @@ export async function applyStocktake(
   }
 }
 
-// 6. رفض أو حذف فاتورة جرد غير معتمدة
+// 6. اعتماد جميع الفواتير قيد المراجعة (PENDING) دفعة واحدة
+export async function applyAllPendingStocktakes(
+  duplicateMode: DuplicateResolutionMode = 'REPLACE'
+) {
+  try {
+    const user = await getAuthenticatedUser()
+    if (!user || !['ADMIN', 'OWNER', 'ACCOUNTANT'].includes(user.role)) {
+      return { success: false, error: 'غير مصرح لك باعتماد الجرد' }
+    }
+
+    const result = await prisma.$transaction(
+      async (tx) => {
+        const pendingStocktakes = await tx.stocktake.findMany({
+          where: { status: 'PENDING' },
+          orderBy: { createdAt: 'asc' },
+          include: { items: true },
+        })
+
+        if (pendingStocktakes.length === 0) {
+          throw new Error('لا توجد فواتير جرد قيد المراجعة لاعتمادها')
+        }
+
+        const [appliedItems, allProducts] = await Promise.all([
+          tx.stocktakeItem.findMany({
+            where: { stocktake: { status: 'APPLIED' } },
+            select: { modelNo: true, color: true },
+          }),
+          tx.product.findMany({
+            select: {
+              id: true,
+              modelNo: true,
+              color: true,
+              stockQty: true,
+              currentStock: true,
+            },
+          }),
+        ])
+
+        const seenCountedKeys = new Set<string>()
+        for (const item of appliedItems) {
+          seenCountedKeys.add(
+            `${item.modelNo.trim().toLowerCase()}__${item.color.trim().toLowerCase()}`
+          )
+        }
+
+        const existingProductMap = new Map<
+          string,
+          { id: string; stockQty: number; currentStock: number; dirty: boolean }
+        >()
+
+        for (const p of allProducts) {
+          const key = `${p.modelNo.trim().toLowerCase()}__${p.color.trim().toLowerCase()}`
+          existingProductMap.set(key, {
+            id: p.id,
+            stockQty: p.stockQty,
+            currentStock: p.currentStock,
+            dirty: false,
+          })
+        }
+
+        const newProductsMap = new Map<
+          string,
+          {
+            modelNo: string
+            color: string
+            description: string
+            material: string
+            price: number
+            stockQty: number
+            currentStock: number
+            status: string
+          }
+        >()
+
+        const pendingIdsToApply: string[] = []
+        let updatedProductsCount = 0
+        let createdProductsCount = 0
+
+        for (const st of pendingStocktakes) {
+          pendingIdsToApply.push(st.id)
+
+          for (const item of st.items) {
+            const m = item.modelNo.trim()
+            const c = item.color.trim()
+            const key = `${m.toLowerCase()}__${c.toLowerCase()}`
+            const isDuplicate = seenCountedKeys.has(key)
+
+            const existingProd = existingProductMap.get(key)
+            if (existingProd) {
+              if (isDuplicate && duplicateMode === 'ADD') {
+                existingProd.stockQty += item.countedQty
+                existingProd.currentStock += item.countedQty
+              } else {
+                existingProd.stockQty = item.countedQty
+                existingProd.currentStock = item.countedQty
+              }
+              existingProd.dirty = true
+            } else {
+              const pendingNew = newProductsMap.get(key)
+              if (pendingNew) {
+                if (isDuplicate && duplicateMode === 'ADD') {
+                  pendingNew.stockQty += item.countedQty
+                  pendingNew.currentStock += item.countedQty
+                } else {
+                  pendingNew.stockQty = item.countedQty
+                  pendingNew.currentStock = item.countedQty
+                }
+              } else {
+                newProductsMap.set(key, {
+                  modelNo: m,
+                  color: c,
+                  description: item.description || '',
+                  material: `${m}${c}`.trim(),
+                  price: item.price || 0,
+                  stockQty: item.countedQty,
+                  currentStock: item.countedQty,
+                  status: item.status === 'CLOSED' ? 'CLOSED' : 'OPEN',
+                })
+              }
+            }
+
+            seenCountedKeys.add(key)
+          }
+        }
+
+        const dirtyUpdates = Array.from(existingProductMap.values()).filter(
+          (p) => p.dirty
+        )
+
+        const BATCH_SIZE = 20
+        for (let i = 0; i < dirtyUpdates.length; i += BATCH_SIZE) {
+          const chunk = dirtyUpdates.slice(i, i + BATCH_SIZE)
+          await Promise.all(
+            chunk.map((p) =>
+              tx.product.update({
+                where: { id: p.id },
+                data: {
+                  stockQty: p.stockQty,
+                  currentStock: p.currentStock,
+                },
+              })
+            )
+          )
+        }
+        updatedProductsCount = dirtyUpdates.length
+
+        const newProductsData = Array.from(newProductsMap.values())
+        if (newProductsData.length > 0) {
+          await tx.product.createMany({
+            data: newProductsData,
+            skipDuplicates: true,
+          })
+          createdProductsCount = newProductsData.length
+        }
+
+        await tx.stocktake.updateMany({
+          where: { id: { in: pendingIdsToApply } },
+          data: {
+            status: 'APPLIED',
+            appliedAt: new Date(),
+            appliedById: user.id,
+          },
+        })
+
+        return {
+          appliedInvoicesCount: pendingIdsToApply.length,
+          updatedProductsCount,
+          createdProductsCount,
+        }
+      },
+      { maxWait: 20000, timeout: 120000 }
+    )
+
+    revalidatePath('/')
+    revalidatePath('/admin/products')
+    revalidatePath('/admin/reports')
+    revalidatePath('/admin/notifications')
+    revalidatePath('/admin/stocktakes')
+    revalidatePath('/orders/new')
+
+    return {
+      success: true,
+      ...result,
+    }
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : 'فشل اعتماد فواتير الجرد'
+    console.error('Error applying all pending stocktakes:', error)
+    return { success: false, error: message }
+  }
+}
+
+// 7. رفض أو حذف فاتورة جرد غير معتمدة
 export async function rejectStocktake(stocktakeId: string) {
   try {
     const user = await getAuthenticatedUser()
