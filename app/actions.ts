@@ -288,6 +288,7 @@ export async function createOrder(
 
         await tx.orderItem.createMany({ data: orderItemsData })
 
+        // خصم currentStock لجميع الأصناف (OPEN و CLOSED) لتطابق المعرض مع المتجر والتقرير
         if (products.length > 0) {
           const caseStatement = products
             .map(
@@ -426,6 +427,11 @@ export async function deleteOrder(orderId: string) {
 
         await tx.orderItem.deleteMany({ where: { orderId } })
         await tx.order.delete({ where: { id: orderId } })
+
+        // حذف نسخة العرض المنسوخة في المتجر (POS-xxx) إن وجدت
+        const syncedOrderId = `POS-${order.orderNo}`
+        await tx.order_items.deleteMany({ where: { order_id: syncedOrderId } })
+        await tx.orders.deleteMany({ where: { id: syncedOrderId } })
       },
       {
         maxWait: 15000,
@@ -451,13 +457,13 @@ export async function deleteAllOrders(
 ) {
   try {
     if (confirmText.trim() !== 'حذف') {
-      return { success: false, error: 'يجب كتابة كلمة "حذف" بشكل صحيح للتأكيد' }
+      return { success: false as const, error: 'يجب كتابة كلمة "حذف" بشكل صحيح للتأكيد' }
     }
 
     const session = await getServerSession(authOptions)
     const userId = session?.user?.image
     if (!userId) {
-      return { success: false, error: 'غير مصرح لك بهذا الإجراء' }
+      return { success: false as const, error: 'غير مصرح لك بهذا الإجراء' }
     }
 
     const user = await prisma.user.findUnique({
@@ -466,7 +472,7 @@ export async function deleteAllOrders(
     })
 
     if (!user || user.role !== 'ADMIN') {
-      return { success: false, error: 'حذف جميع الأوردرات متاح لمدير النظام (ADMIN) فقط' }
+      return { success: false as const, error: 'حذف جميع الأوردرات متاح لمدير النظام (ADMIN) فقط' }
     }
 
     const result = await prisma.$transaction(
@@ -502,6 +508,14 @@ export async function deleteAllOrders(
         await tx.orderItem.deleteMany({})
         const deleted = await tx.order.deleteMany({})
 
+        // حذف كل نسخ العرض المنسوخة في المتجر (POS-...) بدون المساس بأوردرات المتجر (ORD-...)
+        await tx.order_items.deleteMany({
+          where: { order_id: { startsWith: 'POS-' } },
+        })
+        await tx.orders.deleteMany({
+          where: { id: { startsWith: 'POS-' } },
+        })
+
         return deleted.count
       },
       {
@@ -519,12 +533,12 @@ export async function deleteAllOrders(
     revalidatePath('/sorting')
     revalidatePath('/sorting-cut')
 
-    return { success: true, deletedCount: result }
+    return { success: true as const, deletedCount: result }
   } catch (error: unknown) {
     const errorMsg =
       error instanceof Error ? error.message : 'فشل حذف جميع الأوردرات'
     console.error('Error deleting all orders:', error)
-    return { success: false, error: errorMsg }
+    return { success: false as const, error: errorMsg }
   }
 }
 
