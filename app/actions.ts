@@ -828,7 +828,7 @@ export async function getCurrentUser(userId: string) {
 }
 
 // ==========================================
-// 5. مزامنة الأوردر مع المتجر الإلكتروني الخارجي (Vooy Store)
+// 5. مزامنة الأوردر والعميل مع المتجر الإلكتروني الخارجي (Vooy Store)
 // ==========================================
 
 export async function syncOrderToOnlineStore(orderId: string) {
@@ -898,6 +898,77 @@ export async function syncOrderToOnlineStore(orderId: string) {
   } catch (error: unknown) {
     const errorMsg = error instanceof Error ? error.message : "حدث خطأ أثناء الاتصال بالمتجر الإلكتروني";
     console.error("Sync Order To Store Action Error:", errorMsg);
+    return { success: false, error: errorMsg };
+  }
+}
+
+export async function syncCustomerToOnlineStore(customerId: string) {
+  try {
+    const customer = await prisma.customer.findUnique({
+      where: { id: customerId },
+    });
+
+    if (!customer) {
+      return { success: false, error: "العميل غير موجود" };
+    }
+
+    const customerPhone = (customer.phone || customer.phone2 || "").trim();
+    if (!customerPhone) {
+      return {
+        success: false,
+        error: "هذا العميل ليس لديه رقم هاتف مسجل. يرجى تعديل بياناته وإضافة الهاتف أولاً.",
+      };
+    }
+
+    const baseOrderUrl =
+      process.env.STORE_API_URL ||
+      "https://www.vooy.shop/api/external/sync-pos-order";
+    const STORE_CUSTOMER_API_URL =
+      process.env.STORE_CUSTOMER_API_URL ||
+      baseOrderUrl.replace(/\/sync-pos-order\/?$/, "/sync-pos-customer");
+    const SYNC_SECRET =
+      process.env.POS_SYNC_SECRET || "vooy_pos_sync_super_secret_key_2026_xyz";
+
+    const response = await fetch(STORE_CUSTOMER_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-pos-sync-secret": SYNC_SECRET,
+      },
+      body: JSON.stringify({
+        customerName: customer.name,
+        customerPhone,
+        customerAddress: customer.address || "",
+      }),
+    });
+
+    const responseText = await response.text();
+    let result: { success?: boolean; error?: string; url?: string };
+    try {
+      result = JSON.parse(responseText);
+    } catch {
+      return {
+        success: false,
+        error: `استجاب المتجر بكود (${response.status}) بصفحة غير صالحة.\nتأكد من رفع مسار المتجر:\n${STORE_CUSTOMER_API_URL}`,
+      };
+    }
+
+    if (!response.ok || !result.success || !result.url) {
+      throw new Error(result.error || `فشل من المتجر (كود ${response.status})`);
+    }
+
+    return {
+      success: true,
+      url: result.url,
+      phone: customerPhone,
+      customerName: customer.name,
+    };
+  } catch (error: unknown) {
+    const errorMsg =
+      error instanceof Error
+        ? error.message
+        : "حدث خطأ أثناء الاتصال بالمتجر الإلكتروني";
+    console.error("Sync Customer To Store Error:", errorMsg);
     return { success: false, error: errorMsg };
   }
 }

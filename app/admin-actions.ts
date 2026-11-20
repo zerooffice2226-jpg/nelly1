@@ -6,6 +6,64 @@ import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
 
+function normalizeArabicDigits(val: string): string {
+  return val
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+}
+
+function validateCustomerFields(data: {
+  name?: string
+  phone?: string
+  phone2?: string
+  address?: string
+}): { valid: true; phone1: string | null; phone2: string | null; name: string; address: string } | { valid: false; error: string } {
+  const cleanName = String(data.name || '').trim()
+  const cleanAddress = String(data.address || '').trim()
+  const rawPhone1 = normalizeArabicDigits(String(data.phone || '').trim())
+  const rawPhone2 = normalizeArabicDigits(String(data.phone2 || '').trim())
+
+  if (!cleanName) {
+    return { valid: false, error: 'اسم العميل مطلوب.' }
+  }
+
+  if (!cleanAddress) {
+    return { valid: false, error: 'عنوان العميل مطلوب.' }
+  }
+
+  if (!rawPhone1 && !rawPhone2) {
+    return { valid: false, error: 'يجب إدخال رقم هاتف واحد على الأقل (11 رقماً على الأقل).' }
+  }
+
+  if (rawPhone1) {
+    if (!/^[+\d\s()-]+$/.test(rawPhone1)) {
+      return { valid: false, error: 'رقم هاتف 1 يحتوي على حروف غير صالحة.' }
+    }
+    const digits1 = rawPhone1.replace(/\D/g, '')
+    if (digits1.length < 11) {
+      return { valid: false, error: 'رقم هاتف 1 يجب أن يكون 11 رقماً على الأقل.' }
+    }
+  }
+
+  if (rawPhone2) {
+    if (!/^[+\d\s()-]+$/.test(rawPhone2)) {
+      return { valid: false, error: 'رقم هاتف 2 يحتوي على حروف غير صالحة.' }
+    }
+    const digits2 = rawPhone2.replace(/\D/g, '')
+    if (digits2.length < 11) {
+      return { valid: false, error: 'رقم هاتف 2 يجب أن يكون 11 رقماً على الأقل.' }
+    }
+  }
+
+  return {
+    valid: true,
+    name: cleanName,
+    address: cleanAddress,
+    phone1: rawPhone1 || null,
+    phone2: rawPhone2 || null,
+  }
+}
+
 // ==========================================
 // 1. إدارة المستخدمين (Users)
 // ==========================================
@@ -445,7 +503,14 @@ export async function addCustomer(data: {
   force?: boolean;
 }) {
   try {
-    const { name, phone, phone2, code, source, force } = data;
+    const validation = validateCustomerFields(data);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+
+    const { name, address, phone1, phone2 } = validation;
+    const { code, source, force } = data;
+
     const normalizedInputName = name.replace(/[أإآ]/g, 'ا');
     const existingByName: Array<{ name: string }> = await prisma.$queryRaw`
       SELECT name FROM "Customer" 
@@ -458,7 +523,7 @@ export async function addCustomer(data: {
     }
 
     if (!force) {
-      const phonesToCheck = [phone, phone2].filter((p): p is string => Boolean(p && p.trim() !== ""));
+      const phonesToCheck = [phone1, phone2].filter((p): p is string => Boolean(p));
       if (phonesToCheck.length > 0) {
         const existingByPhone = await prisma.customer.findFirst({
           where: {
@@ -483,11 +548,11 @@ export async function addCustomer(data: {
 
     const customer = await prisma.customer.create({
       data: {
-        code: finalCode,
+        code: finalCode.trim(),
         name,
-        phone: phone || null,
-        phone2: phone2 || null,
-        address: data.address || '',
+        phone: phone1,
+        phone2: phone2,
+        address,
         source: source || 'ADMIN',
       },
     });
@@ -506,14 +571,19 @@ export async function updateCustomer(id: string, data: {
   address?: string;
 }) {
   try {
+    const validation = validateCustomerFields(data);
+    if (!validation.valid) {
+      return { success: false, error: validation.error };
+    }
+
     await prisma.customer.update({
       where: { id },
       data: {
-        code: data.code,
-        name: data.name,
-        phone: data.phone,
-        phone2: data.phone2,
-        address: data.address,
+        code: String(data.code || '').trim(),
+        name: validation.name,
+        phone: validation.phone1,
+        phone2: validation.phone2,
+        address: validation.address,
       },
     });
     revalidatePath('/admin/customers');

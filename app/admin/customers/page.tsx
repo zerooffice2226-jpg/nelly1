@@ -9,12 +9,48 @@ import {
     deleteAllCustomers,
     updateCustomer
 } from '@/app/admin-actions';
+import { syncCustomerToOnlineStore } from '@/app/actions';
 import * as XLSX from 'xlsx';
+
+function normalizeArabicDigits(val: string): string {
+  return val
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+}
+
+function validateCustomerForm(data: {
+  name?: string;
+  phone?: string;
+  phone2?: string;
+  address?: string;
+}): string | null {
+  const cleanName = String(data.name || '').trim();
+  const cleanAddress = String(data.address || '').trim();
+  const rawPhone1 = normalizeArabicDigits(String(data.phone || '').trim());
+  const rawPhone2 = normalizeArabicDigits(String(data.phone2 || '').trim());
+
+  if (!cleanName) return 'اسم العميل مطلوب.';
+  if (!cleanAddress) return 'عنوان العميل مطلوب.';
+  if (!rawPhone1 && !rawPhone2) {
+    return 'يجب إدخال رقم هاتف واحد على الأقل (11 رقماً على الأقل).';
+  }
+  if (rawPhone1) {
+    if (!/^[+\d\s()-]+$/.test(rawPhone1) || rawPhone1.replace(/\D/g, '').length < 11) {
+      return 'رقم هاتف 1 يجب أن يحتوي على 11 رقماً على الأقل.';
+    }
+  }
+  if (rawPhone2) {
+    if (!/^[+\d\s()-]+$/.test(rawPhone2) || rawPhone2.replace(/\D/g, '').length < 11) {
+      return 'رقم هاتف 2 يجب أن يحتوي على 11 رقماً على الأقل.';
+    }
+  }
+  return null;
+}
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<any[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [searchTerm, setSearchTerm] = useState(''); // 👈 الميزة الجديدة: حالة البحث اللايف
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Form States
   const [code, setCode] = useState('');
@@ -32,9 +68,12 @@ export default function CustomersPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatusText, setUploadStatusText] = useState('');
 
-  // 👇 Deleting State (للمؤشر)
+  // Deleting State
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteStatusText, setDeleteStatusText] = useState('');
+
+  // Store WhatsApp Link Sharing State
+  const [sharingCustomerId, setSharingCustomerId] = useState<string | null>(null);
 
   useEffect(() => {
     refreshCustomers();
@@ -47,7 +86,6 @@ export default function CustomersPage() {
     });
   };
 
-  // 👇 الميزة الجديدة: منطق تصفية العملاء (Live Search) 👇
   const filteredCustomers = useMemo(() => {
     return customers.filter(c => 
         c.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -59,10 +97,24 @@ export default function CustomersPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name) return alert('الاسم مطلوب'); // الكود أصبح اختيارياً للتوليد التلقائي
+    const validationErr = validateCustomerForm({ name, phone, phone2, address });
+    if (validationErr) return alert(validationErr);
 
-    // تم إضافة source: 'ADMIN' لأن الإضافة تتم من لوحة التحكم
     const res = await addCustomer({ code, name, phone, phone2, address, source: 'ADMIN' });
+    if (res.warning) {
+      if (confirm(`رقم الهاتف مسجل مسبقاً باسم: (${res.existingName}).\nهل تريد الاستمرار في الإضافة؟`)) {
+        const resForce = await addCustomer({ code, name, phone, phone2, address, source: 'ADMIN', force: true });
+        if (resForce.success) {
+          alert('تمت إضافة العميل');
+          setCode(''); setName(''); setPhone(''); setPhone2(''); setAddress('');
+          refreshCustomers();
+        } else {
+          alert('خطأ: ' + resForce.error);
+        }
+      }
+      return;
+    }
+
     if (res.success) {
       alert('تمت إضافة العميل');
       setCode(''); setName(''); setPhone(''); setPhone2(''); setAddress('');
@@ -72,11 +124,42 @@ export default function CustomersPage() {
     }
   };
 
-  // --- Excel Logic (تمت استعادتها بالكامل) ---
+  const handleShareStoreInvite = async (customer: any) => {
+    setSharingCustomerId(customer.id);
+    try {
+      const res = await syncCustomerToOnlineStore(customer.id);
+      if (!res.success || !res.url) {
+        alert('❌ ' + (res.error || 'تعذر تجهيز رابط المتجر'));
+        return;
+      }
+
+      const storeLink = res.url;
+      const message = `مرحباً يا فندم (${customer.name}) ❤️\nيسعدنا دعوتكم لتصفح تشكيلة متجرنا الإلكتروني كاملة والطلب أونلاين مباشرة عبر الرابط الخاص بكم التالي:\n\n${storeLink}`;
+
+      const rawPhone = (res.phone || '').replace(/[^0-9]/g, '');
+      const formattedPhone = rawPhone.startsWith('0') ? `2${rawPhone}` : rawPhone;
+
+      if (formattedPhone) {
+        window.open(`https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`, '_blank');
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(message);
+        alert('تم نسخ الرابط والرسالة بنجاح!');
+      } else {
+        prompt('انسخ الرابط التالي وأرسله للعميل:', storeLink);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'حدث خطأ غير متوقع';
+      alert('حدث خطأ: ' + msg);
+    } finally {
+      setSharingCustomerId(null);
+    }
+  };
+
+  // --- Excel Logic ---
   const downloadTemplate = () => {
     const templateData = [
-        { code: "C101", name: "عميل 1", phone: "010xxxx", phone2: "011xxxx", address: "العنوان" },
-        { code: "C102", name: "عميل 2", phone: "012xxxx", phone2: "", address: "العنوان" }
+        { code: "C101", name: "عميل 1", phone: "01000000001", phone2: "01100000002", address: "العنوان" },
+        { code: "C102", name: "عميل 2", phone: "01200000003", phone2: "", address: "العنوان" }
     ];
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
@@ -127,7 +210,7 @@ export default function CustomersPage() {
     reader.readAsBinaryString(file);
   };
 
-  // --- Delete Logic (تمت استعادتها بالكامل) ---
+  // --- Delete Logic ---
   const handleDelete = async (id: string) => {
     if (confirm('حذف هذا العميل؟')) {
       setIsDeleting(true); 
@@ -173,7 +256,6 @@ export default function CustomersPage() {
     }
   };
 
-  // Checkbox Logic
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
       if(e.target.checked) setSelectedIds(filteredCustomers.map(c => c.id));
       else setSelectedIds([]);
@@ -192,6 +274,10 @@ export default function CustomersPage() {
 
   const handleEditSave = async (e: React.FormEvent) => {
       e.preventDefault();
+      if (!editingCustomer) return;
+      const validationErr = validateCustomerForm(editingCustomer);
+      if (validationErr) return alert(validationErr);
+
       const res = await updateCustomer(editingCustomer.id, editingCustomer);
       if(res.success) {
           alert('تم التعديل');
@@ -199,14 +285,13 @@ export default function CustomersPage() {
           setEditingCustomer(null);
           refreshCustomers();
       } else {
-          alert('خطأ');
+          alert('خطأ: ' + (res.error || 'تعذر التعديل'));
       }
   };
 
   return (
     <div className="space-y-6 relative pb-20" dir="rtl">
        
-       {/* 👇 Full Screen Loader Overlay (تم الحفاظ عليه) */}
        {isDeleting && (
             <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex flex-col justify-center items-center text-white">
                 <div className="w-16 h-16 border-4 border-t-transparent border-white rounded-full animate-spin mb-4"></div>
@@ -223,7 +308,6 @@ export default function CustomersPage() {
         </div>
         
         <div className="flex flex-wrap gap-2 w-full md:w-auto">
-            {/* 👇 حقل البحث اللايف الجديد 👇 */}
             <div className="w-full md:w-64">
                 <input 
                     type="text" 
@@ -252,7 +336,7 @@ export default function CustomersPage() {
         </div>
       </div>
 
-      {/* Upload Section (تم الحفاظ عليه) */}
+      {/* Upload Section */}
       <div className="bg-indigo-50 p-4 rounded border border-indigo-200">
           <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-4">
             <div className="w-full">
@@ -279,18 +363,20 @@ export default function CustomersPage() {
 
       {/* Form Adding */}
       <form onSubmit={handleSubmit} className="bg-white p-4 rounded shadow space-y-4 border-t-4 border-blue-600">
-        <h2 className="font-bold text-gray-700 text-sm border-b pb-2">إضافة عميل جديد (اترك الكود فارغاً للتوليد التلقائي)</h2>
+        <h2 className="font-bold text-gray-700 text-sm border-b pb-2">
+          إضافة عميل جديد (الاسم + رقم هاتف 11 رقم على الأقل + العنوان إلزامية)
+        </h2>
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
           <div><label className="text-xs font-bold text-gray-500">الكود (اختياري)</label><input type="text" className="w-full border p-2 rounded bg-gray-50 focus:bg-white" value={code} onChange={e => setCode(e.target.value)} placeholder="تلقائي..." /></div>
-          <div><label className="text-xs font-bold text-gray-500">الاسم</label><input type="text" className="w-full border p-2 rounded focus:bg-white" value={name} onChange={e => setName(e.target.value)} required /></div>
-          <div><label className="text-xs font-bold text-gray-500">هاتف 1</label><input type="text" className="w-full border p-2 rounded focus:bg-white" value={phone} onChange={e => setPhone(e.target.value)} /></div>
-          <div><label className="text-xs font-bold text-gray-500">هاتف 2</label><input type="text" className="w-full border p-2 rounded bg-yellow-50 focus:bg-white" value={phone2} onChange={e => setPhone2(e.target.value)} /></div>
-          <div><label className="text-xs font-bold text-gray-500">العنوان</label><input type="text" className="w-full border p-2 rounded focus:bg-white" value={address} onChange={e => setAddress(e.target.value)} /></div>
+          <div><label className="text-xs font-bold text-gray-700">الاسم *</label><input type="text" className="w-full border p-2 rounded focus:bg-white" value={name} onChange={e => setName(e.target.value)} required /></div>
+          <div><label className="text-xs font-bold text-gray-700">هاتف 1 (11 رقم على الأقل) *</label><input type="tel" className="w-full border p-2 rounded focus:bg-white" value={phone} onChange={e => setPhone(e.target.value)} placeholder="01XXXXXXXXX" /></div>
+          <div><label className="text-xs font-bold text-gray-500">هاتف 2 (اختياري - 11 رقم لو أدخل)</label><input type="tel" className="w-full border p-2 rounded bg-yellow-50 focus:bg-white" value={phone2} onChange={e => setPhone2(e.target.value)} /></div>
+          <div><label className="text-xs font-bold text-gray-700">العنوان *</label><input type="text" className="w-full border p-2 rounded focus:bg-white" value={address} onChange={e => setAddress(e.target.value)} required /></div>
         </div>
         <button type="submit" disabled={isDeleting} className="bg-blue-600 text-white px-6 py-3 rounded font-bold w-full disabled:opacity-50 hover:bg-blue-700 transition">حفظ العميل</button>
       </form>
 
-      {/* --- Responsive List (Cards on Mobile, Table on Desktop) (تم الحفاظ عليها بالكامل) --- */}
+      {/* --- Responsive List --- */}
       <div className="relative">
         
         {/* 1. Mobile View (Cards) */}
@@ -303,11 +389,11 @@ export default function CustomersPage() {
                 </label>
             </div>
             
-            {/* إشعار الألوان الجديد */}
             <div className="px-2 text-[10px] font-bold text-purple-600">💡 اللون الأرجواني = عميل أضيف من شاشة البيع</div>
 
             {filteredCustomers.map(c => {
-                const isQuickAdd = c.source === 'QUICK'; // 👈 الميزة الجديدة: التحقق من المصدر
+                const isQuickAdd = c.source === 'QUICK';
+                const isSharing = sharingCustomerId === c.id;
                 return (
                     <div key={c.id} className={`bg-white p-4 rounded-lg shadow border-r-4 ${selectedIds.includes(c.id) ? 'border-r-indigo-500 bg-indigo-50' : isQuickAdd ? 'border-r-purple-500 bg-purple-50' : 'border-r-gray-300'}`}>
                         <div className="flex justify-between items-start mb-2">
@@ -321,7 +407,15 @@ export default function CustomersPage() {
                                     </div>
                                 </div>
                             </div>
-                            <div className="flex gap-2">
+                            <div className="flex gap-1.5">
+                                <button
+                                  onClick={() => handleShareStoreInvite(c)}
+                                  disabled={isSharing}
+                                  title="إرسال رابط المتجر المباشر عبر واتساب"
+                                  className="bg-indigo-100 text-indigo-700 p-2 rounded-full text-xs font-bold disabled:opacity-50"
+                                >
+                                  {isSharing ? '⏳' : '📱'}
+                                </button>
                                 <button onClick={() => handleEditClick(c)} className="bg-blue-100 text-blue-600 p-2 rounded-full text-xs">✏️</button>
                                 <button onClick={() => handleDelete(c.id)} className="bg-red-100 text-red-600 p-2 rounded-full text-xs">🗑️</button>
                             </div>
@@ -342,7 +436,7 @@ export default function CustomersPage() {
             })}
         </div>
 
-        {/* 2. Desktop View (Table) (تم الحفاظ عليها بالكامل) */}
+        {/* 2. Desktop View (Table) */}
         <div className="hidden md:block bg-white rounded shadow overflow-hidden">
             <div className="p-2 bg-purple-50 text-xs font-bold text-purple-700 border-b">
                 💡 العملاء باللون <span className="bg-purple-200 px-2 rounded">الأرجواني</span> هم من تمت إضافتهم من شاشات البيع (QUICK).
@@ -361,7 +455,8 @@ export default function CustomersPage() {
             </thead>
             <tbody>
                 {filteredCustomers.map(c => {
-                const isQuickAdd = c.source === 'QUICK'; // 👈 الميزة الجديدة
+                const isQuickAdd = c.source === 'QUICK';
+                const isSharing = sharingCustomerId === c.id;
                 return (
                     <tr key={c.id} className={`border-b hover:bg-gray-50 ${selectedIds.includes(c.id) ? 'bg-indigo-50' : isQuickAdd ? 'bg-purple-50' : ''}`}>
                         <td className="p-3"><input type="checkbox" checked={selectedIds.includes(c.id)} onChange={() => handleSelectOne(c.id)} /></td>
@@ -374,8 +469,17 @@ export default function CustomersPage() {
                         <td className="p-3 text-gray-600 font-mono">{c.phone2}</td>
                         <td className="p-3 text-xs">{c.address}</td>
                         <td className="p-3 flex justify-center gap-2">
-                        <button onClick={() => handleEditClick(c)} className="text-blue-600 bg-blue-100 px-2 py-1 rounded">تعديل</button>
-                        <button onClick={() => handleDelete(c.id)} disabled={isDeleting} className="text-red-600 bg-red-100 px-2 py-1 rounded disabled:opacity-50">حذف</button>
+                        <button
+                          onClick={() => handleShareStoreInvite(c)}
+                          disabled={isSharing}
+                          title="إنشاء حساب وإرسال رابط المتجر المباشر عبر واتساب"
+                          className="text-indigo-700 bg-indigo-100 hover:bg-indigo-200 px-2.5 py-1 rounded font-bold text-xs flex items-center gap-1 disabled:opacity-50"
+                        >
+                          <span>📱</span>
+                          <span>{isSharing ? 'جاري...' : 'متجر'}</span>
+                        </button>
+                        <button onClick={() => handleEditClick(c)} className="text-blue-600 bg-blue-100 px-2 py-1 rounded font-bold text-xs">تعديل</button>
+                        <button onClick={() => handleDelete(c.id)} disabled={isDeleting} className="text-red-600 bg-red-100 px-2 py-1 rounded font-bold text-xs disabled:opacity-50">حذف</button>
                         </td>
                     </tr>
                 )})}
@@ -384,25 +488,40 @@ export default function CustomersPage() {
         </div>
       </div>
 
-      {/* Edit Modal (Responsive) (تم الحفاظ عليه بالكامل) */}
+      {/* Edit Modal */}
       {isEditModalOpen && editingCustomer && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50 p-4">
-              <div className="bg-white rounded w-full max-w-lg p-6 space-y-4 shadow-2xl">
+              <form onSubmit={handleEditSave} className="bg-white rounded w-full max-w-lg p-6 space-y-4 shadow-2xl">
                   <h3 className="font-bold border-b pb-2 text-lg">تعديل بيانات العميل</h3>
                   <div className="space-y-3">
-                    <input type="text" placeholder="الكود" className="w-full border p-3 rounded bg-gray-50" value={editingCustomer.code} onChange={(e) => setEditingCustomer({...editingCustomer, code: e.target.value})} />
-                    <input type="text" placeholder="الاسم" className="w-full border p-3 rounded" value={editingCustomer.name} onChange={(e) => setEditingCustomer({...editingCustomer, name: e.target.value})} />
-                    <div className="grid grid-cols-2 gap-2">
-                        <input type="text" placeholder="هاتف 1" className="w-full border p-3 rounded" value={editingCustomer.phone || ''} onChange={(e) => setEditingCustomer({...editingCustomer, phone: e.target.value})} />
-                        <input type="text" placeholder="هاتف 2" className="w-full border p-3 rounded bg-yellow-50" value={editingCustomer.phone2 || ''} onChange={(e) => setEditingCustomer({...editingCustomer, phone2: e.target.value})} />
+                    <div>
+                      <label className="text-xs font-bold text-gray-500">الكود</label>
+                      <input type="text" placeholder="الكود" className="w-full border p-3 rounded bg-gray-50" value={editingCustomer.code} onChange={(e) => setEditingCustomer({...editingCustomer, code: e.target.value})} />
                     </div>
-                    <input type="text" placeholder="العنوان" className="w-full border p-3 rounded" value={editingCustomer.address || ''} onChange={(e) => setEditingCustomer({...editingCustomer, address: e.target.value})} />
+                    <div>
+                      <label className="text-xs font-bold text-gray-700">الاسم *</label>
+                      <input type="text" placeholder="الاسم" className="w-full border p-3 rounded" value={editingCustomer.name} onChange={(e) => setEditingCustomer({...editingCustomer, name: e.target.value})} required />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs font-bold text-gray-700">هاتف 1 (11 رقم على الأقل) *</label>
+                          <input type="tel" placeholder="هاتف 1" className="w-full border p-3 rounded" value={editingCustomer.phone || ''} onChange={(e) => setEditingCustomer({...editingCustomer, phone: e.target.value})} />
+                        </div>
+                        <div>
+                          <label className="text-xs font-bold text-gray-500">هاتف 2 (11 رقم لو أدخل)</label>
+                          <input type="tel" placeholder="هاتف 2" className="w-full border p-3 rounded bg-yellow-50" value={editingCustomer.phone2 || ''} onChange={(e) => setEditingCustomer({...editingCustomer, phone2: e.target.value})} />
+                        </div>
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-gray-700">العنوان *</label>
+                      <input type="text" placeholder="العنوان" className="w-full border p-3 rounded" value={editingCustomer.address || ''} onChange={(e) => setEditingCustomer({...editingCustomer, address: e.target.value})} required />
+                    </div>
                   </div>
                   <div className="flex justify-end gap-2 pt-2">
-                      <button onClick={() => setIsEditModalOpen(false)} className="px-6 py-2 bg-gray-200 rounded font-bold">إلغاء</button>
-                      <button onClick={handleEditSave} className="px-6 py-2 text-white bg-blue-600 rounded font-bold">حفظ</button>
+                      <button type="button" onClick={() => setIsEditModalOpen(false)} className="px-6 py-2 bg-gray-200 rounded font-bold">إلغاء</button>
+                      <button type="submit" className="px-6 py-2 text-white bg-blue-600 rounded font-bold">حفظ</button>
                   </div>
-              </div>
+              </form>
           </div>
       )}
     </div>

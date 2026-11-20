@@ -9,7 +9,6 @@ import Link from 'next/link';
 
 const PIECES_PER_UNIT = 4;
 
-// Define the Product type for TypeScript
 interface Product {
   id: string;
   modelNo: string;
@@ -21,10 +20,38 @@ interface Product {
   discount: number;
 }
 
-// Define the Safe type
 interface Safe {
   id: string;
   name: string;
+}
+
+function validateQuickCustomer(c: {
+  name: string;
+  phone: string;
+  phone2: string;
+  address: string;
+}): string | null {
+  const norm = (v: string) =>
+    v
+      .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+      .replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)))
+      .trim();
+
+  if (!c.name.trim()) return 'اسم العميل مطلوب.';
+  if (!c.address.trim()) return 'عنوان العميل مطلوب.';
+
+  const p1 = norm(c.phone);
+  const p2 = norm(c.phone2);
+  if (!p1 && !p2) {
+    return 'يجب إدخال رقم هاتف واحد على الأقل (11 رقماً على الأقل).';
+  }
+  if (p1 && (!/^[+\d\s()-]+$/.test(p1) || p1.replace(/\D/g, '').length < 11)) {
+    return 'رقم هاتف 1 يجب أن يحتوي على 11 رقماً على الأقل.';
+  }
+  if (p2 && (!/^[+\d\s()-]+$/.test(p2) || p2.replace(/\D/g, '').length < 11)) {
+    return 'رقم هاتف 2 يجب أن يحتوي على 11 رقماً على الأقل.';
+  }
+  return null;
 }
 
 export default function NewOrderPage() {
@@ -46,10 +73,8 @@ export default function NewOrderPage() {
   const [newCust, setNewCust] = useState({ name: '', phone: '', phone2: '', code: '', address: '' });
   const [isSavingCust, setIsSavingCust] = useState(false);
 
-  // --- NEW: States for local product search ---
-  const [allProducts, setAllProducts] = useState<Product[]>([]); // Use the Product type
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [isProductsLoading, setIsProductsLoading] = useState(true);
-  // --- END NEW ---
 
   const [searchTerm, setSearchTerm] = useState('');
   const [showScanner, setShowScanner] = useState(false);
@@ -63,14 +88,12 @@ export default function NewOrderPage() {
   const [showDiscountOptions, setShowDiscountOptions] = useState(false);
   const [notes, setNotes] = useState('');
   
-  // State for stock validation issues
   const [failedItems, setFailedItems] = useState<any[]>([]);
   const [showOnlyFailed, setShowOnlyFailed] = useState(false);
 
   const [isSavingOrder, setIsSavingOrder] = useState(false);
   const productSearchInputRef = useRef<HTMLInputElement>(null);
 
-  // --- FINAL UNSAVED CHANGES WARNING --- 
   useEffect(() => {
     const isDirty = cart.length > 0 && !isSavingOrder;
 
@@ -100,9 +123,7 @@ export default function NewOrderPage() {
     };
   }, [cart.length, isSavingOrder, pathname, router]);
 
-  // Initial Data Fetching
   useEffect(() => {
-    // Fetch non-critical data
     getCustomers().then(setCustomerResults);
     getSafes().then((data: Safe[]) => {
       setSafes(data);
@@ -116,7 +137,6 @@ export default function NewOrderPage() {
       }
     });
     
-    // Fetch all products for local search
     getProductsForSearch().then(products => {
         setAllProducts(products);
         setIsProductsLoading(false);
@@ -131,7 +151,6 @@ export default function NewOrderPage() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Debounced Customer Search
   useEffect(() => {
       const delayDebounceFn = setTimeout(async () => {
         if (customerSearchTerm.length > 0) {
@@ -146,18 +165,15 @@ export default function NewOrderPage() {
       return () => clearTimeout(delayDebounceFn);
   }, [customerSearchTerm]);
 
-  // --- NEW: Local Product Search Logic ---
   const searchResults = useMemo(() => {
     if (searchTerm.length < 2) return [];
     const lowerCaseSearchTerm = searchTerm.toLowerCase();
 
-    // Prioritize exact match
     const exactMatches = allProducts.filter(p => p.modelNo.toLowerCase() === lowerCaseSearchTerm);
     if (exactMatches.length > 0) {
       return exactMatches;
     }
 
-    // Fallback to 'includes' search if no exact match is found
     return allProducts.filter(p => 
         p.modelNo.toLowerCase().includes(lowerCaseSearchTerm)
     );
@@ -184,8 +200,6 @@ export default function NewOrderPage() {
       return [];
   }, [firstResultModelNo, groupedSearchResults]);
 
-  // --- END NEW ---
-
   const toggleSelection = (productId: string, isChecked: boolean) => {
     setSelectionMap(prev => {
       const newMap = { ...prev };
@@ -196,7 +210,7 @@ export default function NewOrderPage() {
 
   const updateQuantity = (productId: string, newQty: number) => {
     if (newQty < 1) return;
-    const product = allProducts.find(p => p.id === productId); // Search in all products
+    const product = allProducts.find(p => p.id === productId);
     if (!product) return;
 
     if (product.status === 'CLOSED') {
@@ -272,7 +286,6 @@ export default function NewOrderPage() {
     setSelectionMap({});
     setSearchTerm('');
     setShowScanner(true); 
-    // Clear failed items when cart is modified
     if (failedItems.length > 0) setFailedItems([]);
     setShowOnlyFailed(false);
   };
@@ -352,7 +365,7 @@ export default function NewOrderPage() {
     if (depositVal > 0 && !selectedSafeId) { alert("⚠️ يجب اختيار الخزنة!"); return; }
     
     setIsSavingOrder(true); 
-    setFailedItems([]); // Clear previous errors
+    setFailedItems([]);
     setShowOnlyFailed(false);
 
     try {
@@ -371,8 +384,8 @@ export default function NewOrderPage() {
         } else {
              if (result.insufficientStockItems) {
                 setFailedItems(result.insufficientStockItems);
-                setStep(1); // Go back to cart view
-                setShowOnlyFailed(true); // Automatically filter
+                setStep(1);
+                setShowOnlyFailed(true);
                 alert('🚨 توجد أصناف غير متاحة! يرجى مراجعة السلة وتعديلها.');
             } else {
                 alert(result.error || "حدث خطأ أثناء حفظ الأوردر.");
@@ -388,7 +401,8 @@ export default function NewOrderPage() {
 
   const handleQuickAddCustomer = async (e: React.FormEvent) => {
       e.preventDefault();
-      if(!newCust.name) return alert('الاسم مطلوب');
+      const validationErr = validateQuickCustomer(newCust);
+      if (validationErr) return alert(validationErr);
       
       setIsSavingCust(true);
 
@@ -433,6 +447,7 @@ export default function NewOrderPage() {
       }
       setIsSavingCust(false);
   };
+
   const handleHomeClick = () => {
     if (cart.length > 0) {
       if (window.confirm("لديك أصناف في السلة لم يتم حفظها. هل تريد الخروج وتجاهل التغييرات؟")) {
@@ -450,14 +465,13 @@ export default function NewOrderPage() {
   const failedProductIds = new Set(failedItems.map(f => f.productId));
   
   const filteredDisplayList = cart.filter(item => {
-      if (item.type === 'discount') return !showOnlyFailed; // Hide discounts when filtering
+      if (item.type === 'discount') return !showOnlyFailed;
       
       const hasFailedVariant = item.variants.some((v: any) => failedProductIds.has(v.productId));
       if (showOnlyFailed) {
           return hasFailedVariant;
       }
       
-      // Standard search filter
       return item.modelNo.toLowerCase().includes(cartSearchTerm.toLowerCase());
   });
 
@@ -525,7 +539,6 @@ export default function NewOrderPage() {
                             
                             <Scanner onScan={(result) => { if(result && result.length > 0) handleScan(result[0].rawValue); }} />
                             
-                            {/* --- Viewfinder Overlay --- */}
                             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                 <div className="w-60 h-60 border-4 border-dashed border-white rounded-xl"></div>
                             </div>
@@ -618,7 +631,7 @@ export default function NewOrderPage() {
                 {!showOnlyFailed && <div className="mb-4"><input type="text" placeholder="🔎 بحث سريع داخل محتويات السلة..." value={cartSearchTerm} onChange={(e) => setCartSearchTerm(e.target.value)} className="w-full p-2 border rounded-lg bg-white shadow-sm" /></div>}
                 
                 <div className="space-y-3">
-                  {filteredDisplayList.map((item, index) => {
+                  {filteredDisplayList.map((item) => {
                     if (item.type === 'discount') {
                         return (
                             <div key={item.id} className="bg-yellow-50 border-2 border-yellow-400 border-dashed p-3 rounded-lg flex justify-between items-center">
@@ -751,13 +764,13 @@ export default function NewOrderPage() {
               <div className="bg-white w-full max-w-md rounded-2xl p-6 shadow-2xl animate-slide-up">
                   <h3 className="font-bold text-lg mb-4 border-b pb-2 text-center text-blue-900">إضافة عميل جديد</h3>
                   <form onSubmit={handleQuickAddCustomer} className="space-y-4">
-                      <div><label className="block text-xs font-bold text-gray-500 mb-1">اسم العميل (مطلوب)</label><input type="text" value={newCust.name} onChange={e => setNewCust({...newCust, name: e.target.value})} className="w-full border p-3 rounded-xl shadow-sm" required /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">اسم العميل (مطلوب) *</label><input type="text" value={newCust.name} onChange={e => setNewCust({...newCust, name: e.target.value})} className="w-full border p-3 rounded-xl shadow-sm" required /></div>
                       <div><label className="block text-xs font-bold text-gray-500 mb-1">كود العميل (تلقائي لو تركته فارغاً)</label><input type="text" value={newCust.code} onChange={e => setNewCust({...newCust, code: e.target.value})} className="w-full border p-3 rounded-xl bg-gray-50 shadow-sm" placeholder="سيتم التوليد تلقائياً" /></div>
                       <div className="grid grid-cols-2 gap-2">
-                        <div><label className="block text-xs font-bold text-gray-500 mb-1">هاتف 1</label><input type="text" value={newCust.phone} onChange={e => setNewCust({...newCust, phone: e.target.value})} className="w-full border p-3 rounded-xl shadow-sm" /></div>
-                        <div><label className="block text-xs font-bold text-gray-500 mb-1">هاتف 2</label><input type="text" value={newCust.phone2} onChange={e => setNewCust({...newCust, phone2: e.target.value})} className="w-full border p-3 rounded-xl shadow-sm bg-yellow-50" /></div>
+                        <div><label className="block text-xs font-bold text-gray-500 mb-1">هاتف 1 (11 رقم على الأقل) *</label><input type="tel" value={newCust.phone} onChange={e => setNewCust({...newCust, phone: e.target.value})} className="w-full border p-3 rounded-xl shadow-sm" placeholder="01XXXXXXXXX" /></div>
+                        <div><label className="block text-xs font-bold text-gray-500 mb-1">هاتف 2 (11 رقم لو أدخل)</label><input type="tel" value={newCust.phone2} onChange={e => setNewCust({...newCust, phone2: e.target.value})} className="w-full border p-3 rounded-xl shadow-sm bg-yellow-50" /></div>
                       </div>
-                      <div><label className="block text-xs font-bold text-gray-500 mb-1">العنوان</label><input type="text" value={newCust.address} onChange={e => setNewCust({...newCust, address: e.target.value})} className="w-full border p-3 rounded-xl shadow-sm" /></div>
+                      <div><label className="block text-xs font-bold text-gray-500 mb-1">العنوان (مطلوب) *</label><input type="text" value={newCust.address} onChange={e => setNewCust({...newCust, address: e.target.value})} className="w-full border p-3 rounded-xl shadow-sm" required /></div>
                       
                       <div className="flex gap-2 pt-2">
                           <button type="button" onClick={() => setIsQuickAddOpen(false)} className="flex-1 bg-gray-100 py-3 rounded-lg font-bold transition hover:bg-gray-200">إلغاء</button>
