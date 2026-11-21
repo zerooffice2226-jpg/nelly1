@@ -131,6 +131,7 @@ export async function addProduct(data: {
   modelNo: string;
   description?: string;
   material?: string;
+  size?: string;
   price: string | number;
   discount?: string | number;
   status?: string;
@@ -140,6 +141,8 @@ export async function addProduct(data: {
   colors: Array<{ color: string; stock: string | number }>;
 }) {
   try {
+    const cleanSize = data.size ? data.size.trim() : '';
+
     for (const item of data.colors) {
       const cleanColor = String(item.color).trim();
       const finalMaterial = (data.material && data.material.trim() !== "")
@@ -160,6 +163,7 @@ export async function addProduct(data: {
           discount: parseFloat(String(data.discount)) || 0,
           material: finalMaterial,
           description: data.description || '',
+          size: cleanSize || undefined,
           group_name: data.group_name || undefined,
           kind_name: data.kind_name || undefined,
           image: data.image || undefined,
@@ -168,6 +172,7 @@ export async function addProduct(data: {
           modelNo: data.modelNo.trim(),
           description: data.description || '',
           material: finalMaterial,
+          size: cleanSize || null,
           price: parseFloat(String(data.price)) || 0,
           discount: parseFloat(String(data.discount)) || 0,
           color: cleanColor,
@@ -194,6 +199,8 @@ export async function updateProduct(id: string, data: {
   modelNo: string;
   description?: string;
   material?: string;
+  size?: string;
+  applySizeToModel?: boolean;
   color: string;
   price: string | number;
   discount?: string | number;
@@ -209,6 +216,7 @@ export async function updateProduct(id: string, data: {
     const finalMaterial = (data.material && data.material.trim() !== "")
       ? data.material.trim()
       : `${data.modelNo}${cleanColor}`.trim();
+    const cleanSize = data.size !== undefined ? (data.size.trim() || null) : undefined;
 
     const existing = await prisma.product.findUnique({ where: { id } });
     if (!existing) return { success: false, error: 'الصنف غير موجود' };
@@ -226,6 +234,7 @@ export async function updateProduct(id: string, data: {
         modelNo: data.modelNo.trim(),
         description: data.description || '',
         material: finalMaterial,
+        ...(cleanSize !== undefined && { size: cleanSize }),
         color: cleanColor,
         price: parseFloat(String(data.price)) || 0,
         discount: parseFloat(String(data.discount)) || 0,
@@ -237,6 +246,14 @@ export async function updateProduct(id: string, data: {
         image: data.image || undefined,
       },
     });
+
+    if (data.applySizeToModel && cleanSize !== undefined) {
+      await prisma.product.updateMany({
+        where: { modelNo: existing.modelNo },
+        data: { size: cleanSize },
+      });
+    }
+
     revalidatePath('/admin/products');
     revalidatePath('/admin/notifications');
     revalidatePath('/admin/reports');
@@ -263,6 +280,7 @@ export async function addBulkProducts(products: Record<string, unknown>[]) {
         const priceVal = parseFloat(String(p.price || p.out_price || 0)) || 0;
         const discountVal = parseFloat(String(p.discount || 0)) || 0;
         const descVal = String(p.description || p.item_name || '');
+        const sizeVal = String(p.size || '').trim();
         const groupVal = String(p.group_name || '');
         const kindVal = String(p.kind_name || '');
         const imageVal = String(p.images || p.image || '');
@@ -280,6 +298,7 @@ export async function addBulkProducts(products: Record<string, unknown>[]) {
             price: priceVal > 0 ? priceVal : undefined,
             discount: discountVal,
             description: descVal || undefined,
+            size: sizeVal || undefined,
             material: finalMaterial,
             status: productStatus,
             group_name: groupVal || undefined,
@@ -290,6 +309,7 @@ export async function addBulkProducts(products: Record<string, unknown>[]) {
             modelNo,
             description: descVal,
             material: finalMaterial,
+            size: sizeVal || null,
             color,
             price: priceVal,
             discount: discountVal,

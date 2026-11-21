@@ -142,6 +142,7 @@ export default function ProductsPage() {
   const [modelNo, setModelNo] = useState('');
   const [description, setDescription] = useState('');
   const [material, setMaterial] = useState('');
+  const [size, setSize] = useState('');
   const [price, setPrice] = useState('');
   const [discount, setDiscount] = useState('0');
   const [status, setStatus] = useState('OPEN');
@@ -177,6 +178,7 @@ export default function ProductsPage() {
         p.modelNo.toLowerCase().includes(searchTerm.toLowerCase()) || 
         (p.color && p.color.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (p.material && p.material.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (p.size && p.size.toLowerCase().includes(searchTerm.toLowerCase())) ||
         (p.description && p.description.toLowerCase().includes(searchTerm.toLowerCase()))
     );
   }, [products, searchTerm]);
@@ -199,6 +201,7 @@ export default function ProductsPage() {
         modelNo,
         description,
         material,
+        size,
         price,
         discount,
         status,
@@ -209,7 +212,7 @@ export default function ProductsPage() {
 
     if (res.success) {
         alert('تمت الإضافة');
-        setModelNo(''); setDescription(''); setMaterial(''); setPrice(''); setDiscount('0');
+        setModelNo(''); setDescription(''); setMaterial(''); setSize(''); setPrice(''); setDiscount('0');
         setGroupName(''); setKindName('');
         setColors([{ color: '', stock: '' }]);
         refreshProducts();
@@ -218,13 +221,14 @@ export default function ProductsPage() {
     }
   };
 
-  // نموذج الإكسيل الموحد
+  // نموذج الإكسيل الموحد شاملاً عمود المقاس العام (size)
   const downloadTemplate = () => {
     const templateData = [
       {
-        modelNo: "301",
+        modelNo: "3700",
         color: "لبني",
-        material: "301لبني",
+        material: "3700لبني",
+        size: "من 1:4 بيبي",
         description: "طقم بناتي قطعتين",
         price: 425,
         discount: 0,
@@ -232,33 +236,35 @@ export default function ProductsPage() {
         status: "OPEN",
         group_name: "بناتي",
         kind_name: "طقم",
-        images: "https://images.vooy.shop/301-لبني.webp"
+        images: "https://images.vooy.shop/3700-لبني.webp"
       },
       {
-        modelNo: "301",
+        modelNo: "4700",
         color: "كافيه",
-        material: "301كافيه",
+        material: "4700كافيه",
+        size: "من 5:8 وسط",
         description: "طقم بناتي قطعتين",
-        price: 425,
+        price: 450,
         discount: 0,
         stockQty: 60,
         status: "OPEN",
         group_name: "بناتي",
         kind_name: "طقم",
-        images: "https://images.vooy.shop/301-كافيه.webp"
+        images: "https://images.vooy.shop/4700-كافيه.webp"
       },
       {
-        modelNo: "405",
+        modelNo: "5700",
         color: "رمادي",
-        material: "405رمادي",
-        description: "شورت بناتي خروج",
-        price: 150,
+        material: "5700رمادي",
+        size: "من 9:12 محير",
+        description: "طقم بناتي قطعتين",
+        price: 480,
         discount: 10,
         stockQty: 200,
         status: "OPEN",
         group_name: "بناتي",
-        kind_name: "شورت",
-        images: "https://images.vooy.shop/405-رمادي.webp"
+        kind_name: "طقم",
+        images: "https://images.vooy.shop/5700-رمادي.webp"
       }
     ];
     const ws = XLSX.utils.json_to_sheet(templateData);
@@ -277,6 +283,7 @@ export default function ProductsPage() {
         modelNo: product.modelNo,
         color: product.color,
         material: product.material || `${product.modelNo}${product.color}`,
+        size: product.size || '',
         description: product.description || '',
         price: product.price,
         discount: product.discount || 0,
@@ -402,7 +409,7 @@ export default function ProductsPage() {
   };
 
   const handleEditClick = (product: any) => {
-      setEditingProduct({ ...product });
+      setEditingProduct({ ...product, applySizeToModel: true });
       setIsEditModalOpen(true);
   };
 
@@ -434,7 +441,7 @@ export default function ProductsPage() {
             <div className="w-full md:w-64">
                 <input 
                     type="text" 
-                    placeholder="🔍 بحث برقم الموديل أو اللون أو الكي..." 
+                    placeholder="🔍 بحث برقم الموديل أو اللون أو المقاس..." 
                     className="w-full p-2 border-2 border-green-200 rounded-lg focus:border-blue-500 outline-none text-sm"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
@@ -491,10 +498,11 @@ export default function ProductsPage() {
 
       {/* Form Adding */}
       <form onSubmit={handleSubmit} className="bg-white p-4 rounded-lg shadow space-y-4 border-t-4 border-green-600">
-        <h2 className="font-bold text-gray-700 text-sm border-b pb-2">إضافة صنف جديد (بالمفتاح المميز وتصنيفات المتجر)</h2>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <h2 className="font-bold text-gray-700 text-sm border-b pb-2">إضافة صنف جديد (بالمفتاح المميز وتصنيفات المتجر والمقاس العام)</h2>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div><label className="block text-xs font-bold text-gray-500 mb-1">الموديل (modelNo) *</label><input type="text" className="w-full border p-2 rounded bg-gray-50 focus:bg-white" value={modelNo} onChange={e => setModelNo(e.target.value)} required /></div>
             <div><label className="block text-xs font-bold text-gray-500 mb-1">الكي / الماتيريال (اختياري)</label><input type="text" className="w-full border p-2 rounded focus:bg-white" placeholder="مثلاً: 301لبني" value={material} onChange={e => setMaterial(e.target.value)} /></div>
+            <div><label className="block text-xs font-bold text-purple-700 mb-1">المقاس العام (size)</label><input type="text" className="w-full border p-2 rounded focus:bg-white" placeholder="من 1:4 بيبي" value={size} onChange={e => setSize(e.target.value)} /></div>
             <div><label className="block text-xs font-bold text-gray-500 mb-1">سعر القطعة *</label><input type="number" className="w-full border p-2 rounded font-bold focus:bg-white" value={price} onChange={e => setPrice(e.target.value)} required /></div>
             <div><label className="block text-xs font-bold text-red-600 mb-1">خصم تلقائي %</label><input type="number" className="w-full border p-2 rounded font-bold focus:bg-red-50" value={discount} onChange={e => setDiscount(e.target.value)} /></div>
         </div>
@@ -547,8 +555,9 @@ export default function ProductsPage() {
                          <div className="flex items-center gap-3">
                             <input type="checkbox" className="w-5 h-5" checked={selectedIds.includes(p.id)} onChange={() => handleSelectOne(p.id)} />
                             <div>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                     <h3 className="font-bold text-gray-800 text-lg">{p.modelNo}</h3>
+                                    {p.size && <span className="text-[10px] bg-purple-100 text-purple-800 px-2 py-0.5 rounded font-bold">📏 {p.size}</span>}
                                     {p.discount > 0 && <span className="text-[10px] bg-red-100 text-red-600 px-1 rounded font-bold">خصم {p.discount}%</span>}
                                     {p.status === 'CLOSED' && <span className="text-[10px] bg-red-100 text-red-600 px-1 rounded">مغلق</span>}
                                 </div>
@@ -573,7 +582,7 @@ export default function ProductsPage() {
         </div>
 
         {/* 2. Desktop View (Table) */}
-        <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden">
+        <div className="hidden md:block bg-white rounded-lg shadow overflow-x-auto">
             <div className="p-2 bg-gray-50 border-b flex justify-between items-center text-xs text-gray-500">
                 <span>عدد الأصناف المصفاة: {filteredProducts.length}</span>
                 <span>المحدد: {selectedIds.length}</span>
@@ -584,6 +593,7 @@ export default function ProductsPage() {
                 <th className="p-3 w-10 text-center"><input type="checkbox" onChange={handleSelectAll} checked={filteredProducts.length > 0 && selectedIds.length === filteredProducts.length} /></th>
                 <th className="p-3">الموديل</th>
                 <th className="p-3">اللون</th>
+                <th className="p-3">المقاس العام</th>
                 <th className="p-3">الكي المميز (material)</th>
                 <th className="p-3">قسم المتجر</th>
                 <th className="p-3">نوع القطعة</th>
@@ -600,6 +610,7 @@ export default function ProductsPage() {
                     <td className="p-3 text-center"><input type="checkbox" checked={selectedIds.includes(p.id)} onChange={() => handleSelectOne(p.id)} /></td>
                     <td className="p-3 font-bold">{p.modelNo}</td>
                     <td className="p-3">{p.color}</td>
+                    <td className="p-3 text-xs font-bold text-purple-700">{p.size || '-'}</td>
                     <td className="p-3 font-mono font-bold text-indigo-700">{p.material || `${p.modelNo}${p.color}`}</td>
                     <td className="p-3 text-xs">{p.group_name || '-'}</td>
                     <td className="p-3 text-xs">{p.kind_name || '-'}</td>
@@ -627,7 +638,14 @@ export default function ProductsPage() {
                       <div><label className="text-xs text-gray-500">الموديل</label><input type="text" className="w-full border p-2 rounded bg-gray-100 font-bold" value={editingProduct.modelNo} readOnly /></div>
                       <div><label className="text-xs text-gray-500">اللون</label><input type="text" className="w-full border p-2 rounded bg-gray-100 font-bold" value={editingProduct.color} readOnly /></div>
                   </div>
-                  <div><label className="text-xs text-gray-500">الكي المميز (material)</label><input type="text" className="w-full border p-2 rounded font-mono font-bold text-indigo-700" value={editingProduct.material || ''} onChange={(e) => setEditingProduct({...editingProduct, material: e.target.value})} /></div>
+                  <div className="grid grid-cols-2 gap-3">
+                      <div><label className="text-xs text-gray-500">الكي المميز (material)</label><input type="text" className="w-full border p-2 rounded font-mono font-bold text-indigo-700" value={editingProduct.material || ''} onChange={(e) => setEditingProduct({...editingProduct, material: e.target.value})} /></div>
+                      <div><label className="text-xs text-purple-700 font-bold">المقاس العام (size)</label><input type="text" placeholder="مثال: من 1:4 بيبي" className="w-full border p-2 rounded font-bold text-purple-800" value={editingProduct.size || ''} onChange={(e) => setEditingProduct({...editingProduct, size: e.target.value})} /></div>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs font-bold text-purple-700 cursor-pointer">
+                      <input type="checkbox" checked={Boolean(editingProduct.applySizeToModel)} onChange={(e) => setEditingProduct({...editingProduct, applySizeToModel: e.target.checked})} />
+                      <span>تعميم المقاس العام على كل ألوان الموديل {editingProduct.modelNo}</span>
+                  </label>
                   <div><label className="text-xs text-gray-500">الوصف</label><input type="text" className="w-full border p-2 rounded" value={editingProduct.description || ''} onChange={(e) => setEditingProduct({...editingProduct, description: e.target.value})} /></div>
                   <div className="grid grid-cols-2 gap-3">
                       <div><label className="text-xs text-gray-500">قسم المتجر (group_name)</label><input type="text" className="w-full border p-2 rounded" value={editingProduct.group_name || ''} onChange={(e) => setEditingProduct({...editingProduct, group_name: e.target.value})} /></div>
