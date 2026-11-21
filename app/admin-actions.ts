@@ -333,6 +333,337 @@ export async function addBulkProducts(products: Record<string, unknown>[]) {
 }
 
 // ==========================================
+// 2-ب. إدارة المقاسات الجماعية حسب النطاق (Bulk Size Assignment)
+// ==========================================
+
+export type SizeRangeMode = 'AUTO' | 'LAST_2' | 'LAST_3' | 'EXACT' | 'CUSTOM';
+
+export interface BulkSizePayload {
+  baseCode: string;
+  size?: string;
+  mode?: SizeRangeMode;
+  customFrom?: string;
+  customTo?: string;
+  onlyEmpty?: boolean;
+}
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildModelRangeSpec(payload: {
+  baseCode: string;
+  mode?: SizeRangeMode;
+  customFrom?: string;
+  customTo?: string;
+}):
+  | {
+      valid: true;
+      fromCode: string;
+      toCode: string;
+      matcher: (modelNo: string) => boolean;
+    }
+  | { valid: false; error: string } {
+  const mode: SizeRangeMode = payload.mode || 'AUTO';
+  const rawBase = normalizeArabicDigits(String(payload.baseCode || '')).trim();
+  const rawFrom = normalizeArabicDigits(String(payload.customFrom || '')).trim();
+  const rawTo = normalizeArabicDigits(String(payload.customTo || '')).trim();
+
+  if (mode === 'CUSTOM') {
+    if (!rawFrom || !rawTo) {
+      return { valid: false, error: 'يجب إدخال كود البداية وكود النهاية للنطاق المخصص.' };
+    }
+
+    const mFrom = rawFrom.match(/^(.*?)(\d+)$/);
+    const mTo = rawTo.match(/^(.*?)(\d+)$/);
+
+    if (mFrom && mTo && mFrom[1].toLowerCase() === mTo[1].toLowerCase()) {
+      const prefix = mFrom[1];
+      const numStr1 = mFrom[2];
+      const numStr2 = mTo[2];
+      const n1 = parseInt(numStr1, 10);
+      const n2 = parseInt(numStr2, 10);
+      const minN = Math.min(n1, n2);
+      const maxN = Math.max(n1, n2);
+      const hasLeadingZeroPad =
+        numStr1.length === numStr2.length &&
+        (numStr1.startsWith('0') || numStr2.startsWith('0'));
+      const expectedDigitLen = numStr1.length;
+
+      return {
+        valid: true,
+        fromCode: n1 <= n2 ? rawFrom : rawTo,
+        toCode: n1 <= n2 ? rawTo : rawFrom,
+        matcher: (modelNo: string) => {
+          const clean = normalizeArabicDigits(modelNo).trim();
+          if (prefix === '') {
+            if (!/^\d+$/.test(clean)) return false;
+            if (hasLeadingZeroPad && clean.length !== expectedDigitLen) return false;
+            const val = parseInt(clean, 10);
+            return val >= minN && val <= maxN;
+          }
+          if (!clean.toLowerCase().startsWith(prefix.toLowerCase())) return false;
+          const rest = clean.slice(prefix.length);
+          if (!/^\d+$/.test(rest)) return false;
+          if (hasLeadingZeroPad && rest.length !== expectedDigitLen) return false;
+          const val = parseInt(rest, 10);
+          return val >= minN && val <= maxN;
+        },
+      };
+    }
+
+    if (rawFrom.toLowerCase() === rawTo.toLowerCase()) {
+      return {
+        valid: true,
+        fromCode: rawFrom,
+        toCode: rawTo,
+        matcher: (modelNo: string) =>
+          normalizeArabicDigits(modelNo).trim().toLowerCase() === rawFrom.toLowerCase(),
+      };
+    }
+
+    return {
+      valid: false,
+      error: 'تنسيق النطاق المخصص غير متطابق. مثال صحيح: من 3700 إلى 3750.',
+    };
+  }
+
+  if (!rawBase) {
+    return { valid: false, error: 'أدخل كود الموديل الأساسي (مثال: 3700 أو 600 أو 3000).' };
+  }
+
+  if (mode === 'EXACT') {
+    return {
+      valid: true,
+      fromCode: rawBase,
+      toCode: rawBase,
+      matcher: (modelNo: string) =>
+        normalizeArabicDigits(modelNo).trim().toLowerCase() === rawBase.toLowerCase(),
+    };
+  }
+
+  if (mode === 'LAST_2' || mode === 'LAST_3') {
+    const digitsCount = mode === 'LAST_2' ? 2 : 3;
+    if (rawBase.length < digitsCount) {
+      return {
+        valid: false,
+        error: `الكود "${rawBase}" أقصر من ${digitsCount} خانات.`,
+      };
+    }
+    const suffixPart = rawBase.slice(-digitsCount);
+    if (!/^\d+$/.test(suffixPart)) {
+      return {
+        valid: false,
+        error: `يجب أن ينتهي الكود بـ ${digitsCount} أرقام لتطبيق هذا النطاق.`,
+      };
+    }
+    const prefix = rawBase.slice(0, rawBase.length - digitsCount);
+    const fromCode = `${prefix}${'0'.repeat(digitsCount)}`;
+    const toCode = `${prefix}${'9'.repeat(digitsCount)}`;
+    const regex = new RegExp(`^${escapeRegExp(prefix)}\\d{${digitsCount}}$`, 'i');
+
+    return {
+      valid: true,
+      fromCode,
+      toCode,
+      matcher: (modelNo: string) => regex.test(normalizeArabicDigits(modelNo).trim()),
+    };
+  }
+
+  // AUTO: يكتشف الأصفار في نهاية الكود تلقائياً
+  // مثال: 3700 -> 3700..3799 | 600 -> 600..699 | 3000 -> 3000..3999
+  const zeroMatch = rawBase.match(/^(.*?)(0+)$/);
+  if (zeroMatch && (zeroMatch[1].length > 0 || zeroMatch[2].length >= 2)) {
+    const prefix = zeroMatch[1];
+    const zerosLen = zeroMatch[2].length;
+    const fromCode = rawBase;
+    const toCode = `${prefix}${'9'.repeat(zerosLen)}`;
+    const regex = new RegExp(`^${escapeRegExp(prefix)}\\d{${zerosLen}}$`, 'i');
+
+    return {
+      valid: true,
+      fromCode,
+      toCode,
+      matcher: (modelNo: string) => regex.test(normalizeArabicDigits(modelNo).trim()),
+    };
+  }
+
+  return {
+    valid: true,
+    fromCode: rawBase,
+    toCode: rawBase,
+    matcher: (modelNo: string) =>
+      normalizeArabicDigits(modelNo).trim().toLowerCase() === rawBase.toLowerCase(),
+  };
+}
+
+export async function previewBulkProductSize(payload: Omit<BulkSizePayload, 'size'>) {
+  try {
+    const spec = buildModelRangeSpec(payload);
+    if (!spec.valid) {
+      return { success: false as const, error: spec.error };
+    }
+
+    const allProducts = await prisma.product.findMany({
+      select: { id: true, modelNo: true, size: true },
+    });
+
+    const matched = allProducts.filter((p) => spec.matcher(p.modelNo));
+    const onlyEmpty = Boolean(payload.onlyEmpty);
+
+    let alreadyHasSizeCount = 0;
+    let emptySizeCount = 0;
+    const modelsMap = new Map<string, Set<string>>();
+
+    for (const p of matched) {
+      const hasSize = Boolean(p.size && p.size.trim() !== '');
+      if (hasSize) alreadyHasSizeCount++;
+      else emptySizeCount++;
+
+      const key = p.modelNo.trim();
+      if (!modelsMap.has(key)) modelsMap.set(key, new Set());
+      if (hasSize) modelsMap.get(key)!.add(p.size!.trim());
+    }
+
+    const willUpdateCount = onlyEmpty ? emptySizeCount : matched.length;
+    const sampleModels = Array.from(modelsMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b, 'en', { numeric: true }))
+      .slice(0, 20)
+      .map(([modelNo, sizes]) => ({
+        modelNo,
+        currentSize: Array.from(sizes).join(' / '),
+      }));
+
+    return {
+      success: true as const,
+      fromCode: spec.fromCode,
+      toCode: spec.toCode,
+      totalRowsCount: matched.length,
+      uniqueModelsCount: modelsMap.size,
+      alreadyHasSizeCount,
+      emptySizeCount,
+      willUpdateCount,
+      sampleModels,
+    };
+  } catch (e) {
+    console.error('previewBulkProductSize error:', e);
+    return { success: false as const, error: 'تعذر معاينة النطاق.' };
+  }
+}
+
+export async function applyBulkProductSize(payload: BulkSizePayload) {
+  try {
+    const cleanSize = String(payload.size || '').trim();
+    if (!cleanSize) {
+      return { success: false as const, error: 'يرجى كتابة المقاس المطلوب تطبيقه.' };
+    }
+
+    const spec = buildModelRangeSpec(payload);
+    if (!spec.valid) {
+      return { success: false as const, error: spec.error };
+    }
+
+    const allProducts = await prisma.product.findMany({
+      select: { id: true, modelNo: true, size: true },
+    });
+
+    const onlyEmpty = Boolean(payload.onlyEmpty);
+    const targetProducts = allProducts.filter((p) => {
+      if (!spec.matcher(p.modelNo)) return false;
+      if (onlyEmpty && p.size && p.size.trim() !== '') return false;
+      return true;
+    });
+
+    if (targetProducts.length === 0) {
+      return {
+        success: false as const,
+        error: `لم يتم العثور على أصناف مطابقة للتحديث في النطاق (${spec.fromCode} - ${spec.toCode}).`,
+      };
+    }
+
+    const ids = targetProducts.map((p) => p.id);
+    const uniqueModelsCount = new Set(targetProducts.map((p) => p.modelNo.trim())).size;
+
+    await prisma.$transaction(async (tx) => {
+      const BATCH_SIZE = 1000;
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const chunk = ids.slice(i, i + BATCH_SIZE);
+        await tx.product.updateMany({
+          where: { id: { in: chunk } },
+          data: { size: cleanSize },
+        });
+      }
+    });
+
+    revalidatePath('/admin/products');
+    revalidatePath('/admin/reports');
+    revalidatePath('/orders/new');
+
+    return {
+      success: true as const,
+      fromCode: spec.fromCode,
+      toCode: spec.toCode,
+      updatedCount: ids.length,
+      uniqueModelsCount,
+    };
+  } catch (e) {
+    console.error('applyBulkProductSize error:', e);
+    return { success: false as const, error: 'حدث خطأ أثناء تطبيق المقاسات.' };
+  }
+}
+
+export async function clearBulkProductSize(payload: Omit<BulkSizePayload, 'size' | 'onlyEmpty'>) {
+  try {
+    const spec = buildModelRangeSpec(payload);
+    if (!spec.valid) {
+      return { success: false as const, error: spec.error };
+    }
+
+    const allProducts = await prisma.product.findMany({
+      select: { id: true, modelNo: true, size: true },
+    });
+
+    const targetProducts = allProducts.filter(
+      (p) => spec.matcher(p.modelNo) && Boolean(p.size && p.size.trim() !== '')
+    );
+
+    if (targetProducts.length === 0) {
+      return {
+        success: false as const,
+        error: `لا توجد مقاسات مسجلة لمسحها في النطاق (${spec.fromCode} - ${spec.toCode}).`,
+      };
+    }
+
+    const ids = targetProducts.map((p) => p.id);
+
+    await prisma.$transaction(async (tx) => {
+      const BATCH_SIZE = 1000;
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const chunk = ids.slice(i, i + BATCH_SIZE);
+        await tx.product.updateMany({
+          where: { id: { in: chunk } },
+          data: { size: null },
+        });
+      }
+    });
+
+    revalidatePath('/admin/products');
+    revalidatePath('/admin/reports');
+    revalidatePath('/orders/new');
+
+    return {
+      success: true as const,
+      fromCode: spec.fromCode,
+      toCode: spec.toCode,
+      clearedCount: ids.length,
+    };
+  } catch (e) {
+    console.error('clearBulkProductSize error:', e);
+    return { success: false as const, error: 'حدث خطأ أثناء مسح المقاسات.' };
+  }
+}
+
+// ==========================================
 // قسم المزامنة مع جوجل شيت (Google Sheets Sync)
 // ==========================================
 

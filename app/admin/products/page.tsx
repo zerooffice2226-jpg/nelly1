@@ -10,10 +10,46 @@ import {
     updateProduct, 
     syncFromGoogleSheets,
     getSyncOperations,
-    revertSyncOperation
+    revertSyncOperation,
+    previewBulkProductSize,
+    applyBulkProductSize,
+    clearBulkProductSize,
+    SizeRangeMode
 } from '@/app/admin-actions';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
+
+interface SizePreviewResult {
+    success: boolean;
+    error?: string;
+    fromCode?: string;
+    toCode?: string;
+    totalRowsCount?: number;
+    uniqueModelsCount?: number;
+    alreadyHasSizeCount?: number;
+    emptySizeCount?: number;
+    willUpdateCount?: number;
+    sampleModels?: Array<{ modelNo: string; currentSize: string }>;
+}
+
+interface SizeSessionLog {
+    id: number;
+    fromCode: string;
+    toCode: string;
+    sizeText: string;
+    updatedCount: number;
+    uniqueModelsCount: number;
+    actionType: 'APPLY' | 'CLEAR';
+    time: string;
+}
+
+const DEFAULT_SIZE_SUGGESTIONS = [
+    'بيبي من 1:4',
+    'وسط من 5:8',
+    'محير من 9:12',
+    'شبابي',
+    'مواليد',
+];
 
 function AdminSyncControl({ onRefresh }: { onRefresh: () => void }) {
     const [startDate, setStartDate] = useState("2025-06-01");
@@ -154,6 +190,22 @@ export default function ProductsPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any>(null);
 
+  // Bulk Size Modal States
+  const [isSizeModalOpen, setIsSizeModalOpen] = useState(false);
+  const [sizeMode, setSizeMode] = useState<SizeRangeMode>('AUTO');
+  const [sizeBaseCode, setSizeBaseCode] = useState('');
+  const [sizeCustomFrom, setSizeCustomFrom] = useState('');
+  const [sizeCustomTo, setSizeCustomTo] = useState('');
+  const [sizeValue, setSizeValue] = useState('');
+  const [sizeOnlyEmpty, setSizeOnlyEmpty] = useState(false);
+  const [sizePreview, setSizePreview] = useState<SizePreviewResult | null>(null);
+  const [isPreviewLoading, setIsPreviewLoading] = useState(false);
+  const [isApplyingSize, setIsApplyingSize] = useState(false);
+  const [sizeFeedback, setSizeFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [sizeSessionLogs, setSizeSessionLogs] = useState<SizeSessionLog[]>([]);
+  const [sizePreviewTick, setSizePreviewTick] = useState(0);
+  const sizeBaseCodeInputRef = useRef<HTMLInputElement>(null);
+
   // Upload States
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -171,6 +223,166 @@ export default function ProductsPage() {
         setProducts(res);
         setSelectedIds([]);
     });
+  };
+
+  // قائمة المقاسات السريعة (الافتراضية + المسجلة بالفعل في المنتجات)
+  const quickSizeSuggestions = useMemo(() => {
+    const set = new Set<string>(DEFAULT_SIZE_SUGGESTIONS);
+    products.forEach((p) => {
+      if (p.size && String(p.size).trim()) {
+        set.add(String(p.size).trim());
+      }
+    });
+    return Array.from(set).slice(0, 14);
+  }, [products]);
+
+  // معاينة النطاق تلقائياً عند تغيير المدخلات
+  useEffect(() => {
+    if (!isSizeModalOpen) return;
+
+    const hasInput =
+      sizeMode === 'CUSTOM'
+        ? sizeCustomFrom.trim().length > 0 && sizeCustomTo.trim().length > 0
+        : sizeBaseCode.trim().length > 0;
+
+    if (!hasInput) {
+      setSizePreview(null);
+      setIsPreviewLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsPreviewLoading(true);
+
+    const timer = setTimeout(async () => {
+      const res = await previewBulkProductSize({
+        baseCode: sizeBaseCode,
+        mode: sizeMode,
+        customFrom: sizeCustomFrom,
+        customTo: sizeCustomTo,
+        onlyEmpty: sizeOnlyEmpty,
+      });
+
+      if (!cancelled) {
+        setSizePreview(res);
+        setIsPreviewLoading(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    isSizeModalOpen,
+    sizeMode,
+    sizeBaseCode,
+    sizeCustomFrom,
+    sizeCustomTo,
+    sizeOnlyEmpty,
+    sizePreviewTick,
+  ]);
+
+  const openSizeModal = () => {
+    setSizeFeedback(null);
+    setIsSizeModalOpen(true);
+    setTimeout(() => sizeBaseCodeInputRef.current?.focus(), 100);
+  };
+
+  const handleApplyBulkSize = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSizeFeedback(null);
+
+    if (!sizeValue.trim()) {
+      setSizeFeedback({ type: 'error', text: 'يرجى كتابة المقاس أولاً (مثال: بيبي من 1:4).' });
+      return;
+    }
+
+    setIsApplyingSize(true);
+    const res = await applyBulkProductSize({
+      baseCode: sizeBaseCode,
+      size: sizeValue,
+      mode: sizeMode,
+      customFrom: sizeCustomFrom,
+      customTo: sizeCustomTo,
+      onlyEmpty: sizeOnlyEmpty,
+    });
+    setIsApplyingSize(false);
+
+    if (res.success) {
+      const msg = `تم تطبيق المقاس "${sizeValue.trim()}" على ${res.updatedCount} صنف (${res.uniqueModelsCount} موديل) في النطاق من ${res.fromCode} إلى ${res.toCode}.`;
+      setSizeFeedback({ type: 'success', text: msg });
+      setSizeSessionLogs((prev) => [
+        {
+          id: Date.now(),
+          fromCode: res.fromCode,
+          toCode: res.toCode,
+          sizeText: sizeValue.trim(),
+          updatedCount: res.updatedCount,
+          uniqueModelsCount: res.uniqueModelsCount,
+          actionType: 'APPLY',
+          time: new Date().toLocaleTimeString('ar-EG'),
+        },
+        ...prev,
+      ]);
+
+      setSizeBaseCode('');
+      setSizeCustomFrom('');
+      setSizeCustomTo('');
+      setSizeValue('');
+      setSizePreview(null);
+      refreshProducts();
+      sizeBaseCodeInputRef.current?.focus();
+    } else {
+      setSizeFeedback({ type: 'error', text: res.error || 'فشل تطبيق المقاسات.' });
+    }
+  };
+
+  const handleClearBulkSize = async () => {
+    if (!sizePreview?.success || !sizePreview.alreadyHasSizeCount) return;
+    if (
+      !confirm(
+        `هل أنت متأكد من مسح المقاسات المسجلة في النطاق من ${sizePreview.fromCode} إلى ${sizePreview.toCode} (${sizePreview.alreadyHasSizeCount} صنف)؟`
+      )
+    ) {
+      return;
+    }
+
+    setIsApplyingSize(true);
+    setSizeFeedback(null);
+
+    const res = await clearBulkProductSize({
+      baseCode: sizeBaseCode,
+      mode: sizeMode,
+      customFrom: sizeCustomFrom,
+      customTo: sizeCustomTo,
+    });
+
+    setIsApplyingSize(false);
+
+    if (res.success) {
+      setSizeFeedback({
+        type: 'success',
+        text: `تم مسح المقاسات لعدد ${res.clearedCount} صنف في النطاق من ${res.fromCode} إلى ${res.toCode}.`,
+      });
+      setSizeSessionLogs((prev) => [
+        {
+          id: Date.now(),
+          fromCode: res.fromCode,
+          toCode: res.toCode,
+          sizeText: 'مسح المقاسات',
+          updatedCount: res.clearedCount,
+          uniqueModelsCount: 0,
+          actionType: 'CLEAR',
+          time: new Date().toLocaleTimeString('ar-EG'),
+        },
+        ...prev,
+      ]);
+      setSizePreviewTick((t) => t + 1);
+      refreshProducts();
+    } else {
+      setSizeFeedback({ type: 'error', text: res.error || 'تعذر مسح المقاسات.' });
+    }
   };
 
   const filteredProducts = useMemo(() => {
@@ -437,7 +649,7 @@ export default function ProductsPage() {
             <p className="text-xs text-green-600 font-bold mt-1">العدد المصفى: {filteredProducts.length}</p>
         </div>
         
-        <div className="flex flex-wrap gap-2 w-full md:w-auto">
+        <div className="flex flex-wrap gap-2 w-full md:w-auto items-center">
             <div className="w-full md:w-64">
                 <input 
                     type="text" 
@@ -447,6 +659,15 @@ export default function ProductsPage() {
                     onChange={(e) => setSearchTerm(e.target.value)}
                 />
             </div>
+
+            <button
+                type="button"
+                onClick={openSizeModal}
+                className="flex-1 md:flex-none bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-black shadow-md shadow-purple-100 flex items-center justify-center gap-1.5 transition-all active:scale-95"
+            >
+                <span>📏</span>
+                <span>إضافة المقاسات</span>
+            </button>
 
             {selectedIds.length > 0 && (
                 <button 
@@ -498,7 +719,16 @@ export default function ProductsPage() {
 
       {/* Form Adding */}
       <form onSubmit={handleSubmit} className="bg-white p-4 rounded-lg shadow space-y-4 border-t-4 border-green-600">
-        <h2 className="font-bold text-gray-700 text-sm border-b pb-2">إضافة صنف جديد (بالمفتاح المميز وتصنيفات المتجر والمقاس العام)</h2>
+        <div className="flex flex-wrap justify-between items-center gap-2 border-b pb-2">
+            <h2 className="font-bold text-gray-700 text-sm">إضافة صنف جديد (بالمفتاح المميز وتصنيفات المتجر والمقاس العام)</h2>
+            <button
+                type="button"
+                onClick={openSizeModal}
+                className="text-xs bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 px-3 py-1.5 rounded-lg font-black transition-colors"
+            >
+                📏 توزيع المقاسات لنطاق موديلات (مثل 3700 ← 3799)
+            </button>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div><label className="block text-xs font-bold text-gray-500 mb-1">الموديل (modelNo) *</label><input type="text" className="w-full border p-2 rounded bg-gray-50 focus:bg-white" value={modelNo} onChange={e => setModelNo(e.target.value)} required /></div>
             <div><label className="block text-xs font-bold text-gray-500 mb-1">الكي / الماتيريال (اختياري)</label><input type="text" className="w-full border p-2 rounded focus:bg-white" placeholder="مثلاً: 301لبني" value={material} onChange={e => setMaterial(e.target.value)} /></div>
@@ -628,6 +858,348 @@ export default function ProductsPage() {
             </table>
         </div>
       </div>
+
+      {/* Bulk Size Assignment Modal */}
+      {isSizeModalOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-center z-50 p-3 sm:p-4 overflow-y-auto">
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden">
+                  {/* Modal Header */}
+                  <div className="bg-gradient-to-l from-purple-700 to-indigo-700 text-white p-5 flex justify-between items-center shrink-0">
+                      <div>
+                          <h3 className="text-lg sm:text-xl font-black flex items-center gap-2">
+                              <span>📏</span>
+                              <span>إضافة المقاسات الجماعية حسب نطاق الموديلات</span>
+                          </h3>
+                          <p className="text-xs text-purple-100 mt-1">
+                              تحديث عمود المقاس العام تلقائياً (مثال: 3700 ← 3799 | 600 ← 699 | 3000 ← 3999)
+                          </p>
+                      </div>
+                      <button
+                          type="button"
+                          onClick={() => setIsSizeModalOpen(false)}
+                          className="text-white/80 hover:text-white text-2xl font-bold p-1"
+                      >
+                          ✕
+                      </button>
+                  </div>
+
+                  {/* Modal Body */}
+                  <form onSubmit={handleApplyBulkSize} className="p-5 overflow-y-auto flex-1 space-y-5">
+                      {sizeFeedback && (
+                          <div
+                              className={`p-3.5 rounded-2xl text-xs sm:text-sm font-bold border ${
+                                  sizeFeedback.type === 'success'
+                                      ? 'bg-emerald-50 border-emerald-300 text-emerald-800'
+                                      : 'bg-red-50 border-red-300 text-red-700'
+                              }`}
+                          >
+                              {sizeFeedback.type === 'success' ? '✅ ' : '⚠️ '}
+                              {sizeFeedback.text}
+                          </div>
+                      )}
+
+                      {/* 1. طريقة تحديد النطاق */}
+                      <div className="space-y-2">
+                          <label className="block text-xs font-black text-gray-600">
+                              1. طريقة تحديد النطاق:
+                          </label>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              {[
+                                  { id: 'AUTO', label: '🎯 تلقائي بالأصفار', desc: '3700←3799 / 3000←3999' },
+                                  { id: 'LAST_2', label: '💯 نطاق المئة (×99)', desc: 'مثلاً 3000←3099' },
+                                  { id: 'CUSTOM', label: '🔢 من - إلى', desc: 'تحديد بداية ونهاية' },
+                                  { id: 'EXACT', label: '📌 موديل محدد', desc: 'موديل واحد فقط' },
+                              ].map((opt) => (
+                                  <button
+                                      key={opt.id}
+                                      type="button"
+                                      onClick={() => setSizeMode(opt.id as SizeRangeMode)}
+                                      className={`p-2.5 rounded-xl border text-right transition-all ${
+                                          sizeMode === opt.id
+                                              ? 'bg-purple-50 border-purple-600 ring-2 ring-purple-200 text-purple-900'
+                                              : 'bg-gray-50 border-gray-200 text-gray-700 hover:bg-gray-100'
+                                      }`}
+                                  >
+                                      <div className="text-xs font-black">{opt.label}</div>
+                                      <div className="text-[10px] text-gray-500 mt-0.5">{opt.desc}</div>
+                                  </button>
+                              ))}
+                          </div>
+                      </div>
+
+                      {/* 2. إدخال الكود أو النطاق */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                          {sizeMode === 'CUSTOM' ? (
+                              <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                      <label className="block text-xs font-bold text-gray-600 mb-1">
+                                          من موديل *
+                                      </label>
+                                      <input
+                                          ref={sizeBaseCodeInputRef}
+                                          type="text"
+                                          value={sizeCustomFrom}
+                                          onChange={(e) => setSizeCustomFrom(e.target.value)}
+                                          placeholder="3700"
+                                          className="w-full p-3 border-2 border-purple-200 rounded-xl font-mono font-black text-base bg-white outline-none focus:border-purple-600"
+                                      />
+                                  </div>
+                                  <div>
+                                      <label className="block text-xs font-bold text-gray-600 mb-1">
+                                          إلى موديل *
+                                      </label>
+                                      <input
+                                          type="text"
+                                          value={sizeCustomTo}
+                                          onChange={(e) => setSizeCustomTo(e.target.value)}
+                                          placeholder="3749"
+                                          className="w-full p-3 border-2 border-purple-200 rounded-xl font-mono font-black text-base bg-white outline-none focus:border-purple-600"
+                                      />
+                                  </div>
+                              </div>
+                          ) : (
+                              <div>
+                                  <label className="block text-xs font-bold text-gray-600 mb-1">
+                                      كود الموديل الأساسي *
+                                  </label>
+                                  <input
+                                      ref={sizeBaseCodeInputRef}
+                                      type="text"
+                                      value={sizeBaseCode}
+                                      onChange={(e) => setSizeBaseCode(e.target.value)}
+                                      placeholder="مثال: 3700 أو 600 أو 3000"
+                                      className="w-full p-3 border-2 border-purple-200 rounded-xl font-mono font-black text-base bg-white outline-none focus:border-purple-600"
+                                  />
+                                  <p className="text-[11px] text-gray-400 mt-1">
+                                      {sizeMode === 'AUTO' && 'أمثلة: 3700 ← 3799 | 600 ← 699 | 3000 ← 3999'}
+                                      {sizeMode === 'LAST_2' && 'مثال: 3000 ← 3099 | 3700 ← 3799'}
+                                      {sizeMode === 'EXACT' && 'يطبق على كود الموديل المكتوب فقط'}
+                                  </p>
+                              </div>
+                          )}
+
+                          <div>
+                              <label className="block text-xs font-bold text-purple-800 mb-1">
+                                  المقاس المطلوب تطبيقه *
+                              </label>
+                              <input
+                                  type="text"
+                                  value={sizeValue}
+                                  onChange={(e) => setSizeValue(e.target.value)}
+                                  placeholder="مثال: بيبي من 1:4"
+                                  className="w-full p-3 border-2 border-purple-200 rounded-xl font-bold text-base bg-white outline-none focus:border-purple-600"
+                              />
+                              <p className="text-[11px] text-gray-400 mt-1">
+                                  سيُكتب مباشرة في عمود المقاس العام (size) لكل ألوان النطاق
+                              </p>
+                          </div>
+                      </div>
+
+                      {/* اختصارات سريعة للمقاسات */}
+                      <div className="space-y-1.5">
+                          <span className="text-[11px] font-bold text-gray-500 block">
+                              اختصارات سريعة للمقاسات (اضغط للاختيار):
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                              {quickSizeSuggestions.map((preset) => (
+                                  <button
+                                      key={preset}
+                                      type="button"
+                                      onClick={() => setSizeValue(preset)}
+                                      className={`px-3 py-1 rounded-full text-xs font-bold border transition-all ${
+                                          sizeValue.trim() === preset
+                                              ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
+                                              : 'bg-white text-gray-700 border-gray-200 hover:border-purple-400 hover:bg-purple-50'
+                                      }`}
+                                  >
+                                      {preset}
+                                  </button>
+                              ))}
+                          </div>
+                      </div>
+
+                      {/* خيار الكتابة فوق الموجود أم الفارغ فقط */}
+                      <div className="flex flex-wrap gap-4 bg-purple-50/60 p-3 rounded-xl border border-purple-100 text-xs font-bold">
+                          <label className="flex items-center gap-2 cursor-pointer text-gray-800">
+                              <input
+                                  type="radio"
+                                  name="sizeOverwriteMode"
+                                  checked={!sizeOnlyEmpty}
+                                  onChange={() => setSizeOnlyEmpty(false)}
+                              />
+                              <span>تطبيق على جميع الأصناف في النطاق (استبدال القديم إن وجد)</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer text-purple-900">
+                              <input
+                                  type="radio"
+                                  name="sizeOverwriteMode"
+                                  checked={sizeOnlyEmpty}
+                                  onChange={() => setSizeOnlyEmpty(true)}
+                              />
+                              <span>تطبيق على الأصناف التي بدون مقاس فقط</span>
+                          </label>
+                      </div>
+
+                      {/* بطاقة المعاينة المباشرة */}
+                      {(isPreviewLoading || sizePreview) && (
+                          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                              <div className="flex justify-between items-center">
+                                  <span className="text-xs font-black text-slate-700">
+                                      🔍 معاينة النطاق المباشرة
+                                  </span>
+                                  {isPreviewLoading && (
+                                      <span className="text-xs font-bold text-purple-600 animate-pulse">
+                                          جاري الفحص...
+                                      </span>
+                                  )}
+                              </div>
+
+                              {!isPreviewLoading && sizePreview && !sizePreview.success && (
+                                  <p className="text-xs font-bold text-red-600">
+                                      ⚠️ {sizePreview.error}
+                                  </p>
+                              )}
+
+                              {!isPreviewLoading && sizePreview && sizePreview.success && (
+                                  <>
+                                      <div className="flex flex-wrap items-center justify-between gap-2 bg-white p-3 rounded-xl border border-slate-200">
+                                          <div className="text-xs font-bold text-gray-600">
+                                              النطاق الفعلي المستهدف:{' '}
+                                              <span className="font-mono font-black text-purple-700 text-sm">
+                                                  {sizePreview.fromCode}
+                                              </span>
+                                              {' ← '}
+                                              <span className="font-mono font-black text-purple-700 text-sm">
+                                                  {sizePreview.toCode}
+                                              </span>
+                                          </div>
+                                          <div className="flex gap-2 text-xs font-black">
+                                              <span className="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-lg">
+                                                  {sizePreview.uniqueModelsCount} موديل
+                                              </span>
+                                              <span className="bg-purple-100 text-purple-800 px-2.5 py-1 rounded-lg">
+                                                  سيتم تحديث: {sizePreview.willUpdateCount} صنف
+                                              </span>
+                                          </div>
+                                      </div>
+
+                                      {sizePreview.totalRowsCount === 0 ? (
+                                          <p className="text-xs font-bold text-amber-700 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
+                                              لا توجد موديلات مسجلة حالياً ضمن هذا النطاق ({sizePreview.fromCode} - {sizePreview.toCode}).
+                                          </p>
+                                      ) : (
+                                          <>
+                                              <div className="text-[11px] font-bold text-gray-500 flex flex-wrap gap-3">
+                                                  <span>إجمالي الأصناف (بالألوان): {sizePreview.totalRowsCount}</span>
+                                                  <span>•</span>
+                                                  <span className="text-amber-700">لديها مقاس سابق: {sizePreview.alreadyHasSizeCount}</span>
+                                                  <span>•</span>
+                                                  <span className="text-emerald-700">بدون مقاس: {sizePreview.emptySizeCount}</span>
+                                              </div>
+
+                                              {sizePreview.sampleModels && sizePreview.sampleModels.length > 0 && (
+                                                  <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pt-1">
+                                                      {sizePreview.sampleModels.map((m) => (
+                                                          <span
+                                                              key={m.modelNo}
+                                                              className={`px-2 py-0.5 rounded-lg text-[11px] font-mono font-bold border ${
+                                                                  m.currentSize
+                                                                      ? 'bg-amber-50 text-amber-900 border-amber-200'
+                                                                      : 'bg-white text-slate-700 border-slate-200'
+                                                              }`}
+                                                          >
+                                                              {m.modelNo}
+                                                              {m.currentSize ? ` (${m.currentSize})` : ''}
+                                                          </span>
+                                                      ))}
+                                                      {(sizePreview.uniqueModelsCount || 0) > 20 && (
+                                                          <span className="text-[11px] font-bold text-gray-400 px-2 py-0.5">
+                                                              + {(sizePreview.uniqueModelsCount || 0) - 20} موديل آخر...
+                                                          </span>
+                                                      )}
+                                                  </div>
+                                              )}
+                                          </>
+                                      )}
+                                  </>
+                              )}
+                          </div>
+                      )}
+
+                      {/* سجل العمليات المنفذة في الجلسة */}
+                      {sizeSessionLogs.length > 0 && (
+                          <div className="border-t border-gray-100 pt-3 space-y-2">
+                              <h4 className="text-xs font-black text-gray-500">
+                                  سجل التعديلات المنفذة في هذه النافذة:
+                              </h4>
+                              <div className="max-h-32 overflow-y-auto space-y-1.5">
+                                  {sizeSessionLogs.map((log) => (
+                                      <div
+                                          key={log.id}
+                                          className={`flex justify-between items-center text-xs px-3 py-2 rounded-xl border ${
+                                              log.actionType === 'APPLY'
+                                                  ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                                                  : 'bg-red-50/70 border-red-200 text-red-900'
+                                          }`}
+                                      >
+                                          <div className="font-bold">
+                                              <span className="font-mono">{log.fromCode} → {log.toCode}</span>
+                                              {' : '}
+                                              <span>{log.sizeText}</span>
+                                          </div>
+                                          <div className="text-[11px] font-bold">
+                                              {log.updatedCount} صنف ({log.time})
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          </div>
+                      )}
+
+                      {/* Footer Buttons */}
+                      <div className="flex flex-wrap justify-between items-center gap-2 pt-3 border-t border-gray-100">
+                          <button
+                              type="button"
+                              onClick={handleClearBulkSize}
+                              disabled={
+                                  isApplyingSize ||
+                                  !sizePreview?.success ||
+                                  !sizePreview.alreadyHasSizeCount
+                              }
+                              className="px-3.5 py-2.5 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                              🗑️ مسح مقاس النطاق
+                          </button>
+
+                          <div className="flex gap-2">
+                              <button
+                                  type="button"
+                                  onClick={() => setIsSizeModalOpen(false)}
+                                  className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl font-bold text-gray-700 text-sm"
+                              >
+                                  إغلاق
+                              </button>
+                              <button
+                                  type="submit"
+                                  disabled={
+                                      isApplyingSize ||
+                                      isPreviewLoading ||
+                                      !sizeValue.trim() ||
+                                      !sizePreview?.success ||
+                                      (sizePreview.willUpdateCount || 0) === 0
+                                  }
+                                  className="px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-black text-sm shadow-lg shadow-purple-200 disabled:bg-gray-300 disabled:shadow-none disabled:cursor-not-allowed"
+                              >
+                                  {isApplyingSize
+                                      ? '⏳ جاري التطبيق...'
+                                      : `✅ تطبيق المقاس (${sizePreview?.willUpdateCount || 0} صنف)`}
+                              </button>
+                          </div>
+                      </div>
+                  </form>
+              </div>
+          </div>
+      )}
 
       {/* Edit Modal */}
       {isEditModalOpen && editingProduct && (
